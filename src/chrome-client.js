@@ -1533,9 +1533,13 @@ function setPanelCollapsed(collapsed) {
   if (isMobileSheet()) return;
   isPanelCollapsed = Boolean(collapsed);
   document.body.classList.toggle("panel-collapsed", isPanelCollapsed);
-  const root = document.documentElement;
-  if (root && root.style && typeof root.style.setProperty === "function") {
-    root.style.setProperty("--panel-w", isPanelCollapsed ? "0px" : currentPanelWidth + "px");
+  if (isPanelCollapsed) {
+    const root = document.documentElement;
+    if (root && root.style && typeof root.style.setProperty === "function") {
+      root.style.setProperty("--panel-w", "0px");
+    }
+  } else {
+    applyPanelWidth(preferredPanelWidth, { persist: false });
   }
   if (panelScroll) panelScroll.inert = ended || isPanelCollapsed;
   if (chatComposer) chatComposer.inert = ended || isPanelCollapsed;
@@ -1575,6 +1579,20 @@ function applyPanelWidth(width, { persist = false } = {}) {
 }
 
 const RESIZE_DRAG_THRESHOLD_PX = 4;
+const DOUBLE_CLICK_DELAY_MS = 250;
+
+/** @type {any} */
+let panelClickTimer = null;
+
+function resetPanelWidth() {
+  if (isMobileSheet()) return;
+  if (panelClickTimer) {
+    clearTimeout(panelClickTimer);
+    panelClickTimer = null;
+  }
+  if (isPanelCollapsed) setPanelCollapsed(false);
+  applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
+}
 
 /** @type {{ pointerId: any, startX: number, startWidth: number, hasDragged: boolean } | null} */
 let panelDrag = null;
@@ -1598,10 +1616,21 @@ function finishPanelDrag(event) {
     }
   }
   if (hasDragged) {
+    if (panelClickTimer) {
+      clearTimeout(panelClickTimer);
+      panelClickTimer = null;
+    }
     preferredPanelWidth = currentPanelWidth;
     persistPanelWidth(preferredPanelWidth);
+  } else if (panelClickTimer) {
+    clearTimeout(panelClickTimer);
+    panelClickTimer = null;
+    resetPanelWidth();
   } else {
-    togglePanelCollapsed();
+    panelClickTimer = setTimeout(() => {
+      panelClickTimer = null;
+      togglePanelCollapsed();
+    }, DOUBLE_CLICK_DELAY_MS);
   }
 }
 
@@ -1632,6 +1661,10 @@ if (panelResizer) {
     if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
     const deltaX = Number(event.clientX) - panelDrag.startX;
     if (!panelDrag.hasDragged && Math.abs(deltaX) >= RESIZE_DRAG_THRESHOLD_PX) {
+      if (panelClickTimer) {
+        clearTimeout(panelClickTimer);
+        panelClickTimer = null;
+      }
       panelDrag.hasDragged = true;
       document.body.classList.add("is-resizing-panel");
       if (isPanelCollapsed) {
@@ -1654,13 +1687,15 @@ if (panelResizer) {
   window.addEventListener("pointercancel", clearPanelDrag);
 
   panelResizer.addEventListener("dblclick", () => {
-    if (isMobileSheet()) return;
-    if (isPanelCollapsed) setPanelCollapsed(false);
-    applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
+    resetPanelWidth();
   });
 
   panelResizer.addEventListener("keydown", (event) => {
     if (isMobileSheet()) return;
+    if (panelClickTimer) {
+      clearTimeout(panelClickTimer);
+      panelClickTimer = null;
+    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       togglePanelCollapsed();
