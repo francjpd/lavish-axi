@@ -1526,6 +1526,30 @@ function persistPanelWidth(width) {
 
 let preferredPanelWidth = readStoredPanelWidth();
 let currentPanelWidth = clampPanelWidth(preferredPanelWidth);
+let isPanelCollapsed = false;
+
+function setPanelCollapsed(collapsed) {
+  if (isMobileSheet()) return;
+  isPanelCollapsed = Boolean(collapsed);
+  document.body.classList.toggle("panel-collapsed", isPanelCollapsed);
+  const root = document.documentElement;
+  if (root && root.style && typeof root.style.setProperty === "function") {
+    root.style.setProperty("--panel-w", isPanelCollapsed ? "0px" : currentPanelWidth + "px");
+  }
+  if (panelScroll) panelScroll.inert = ended || isPanelCollapsed;
+  if (chatComposer) chatComposer.inert = ended || isPanelCollapsed;
+  if (panelResizer) {
+    panelResizer.setAttribute("aria-expanded", isPanelCollapsed ? "false" : "true");
+    panelResizer.setAttribute("aria-label", isPanelCollapsed ? "Show conversation" : "Hide conversation");
+    panelResizer.title = isPanelCollapsed
+      ? "Click to show conversation, drag to resize"
+      : "Click to hide conversation, drag to resize";
+  }
+}
+
+function togglePanelCollapsed() {
+  setPanelCollapsed(!isPanelCollapsed);
+}
 
 function applyPanelWidth(width, { persist = false } = {}) {
   currentPanelWidth = clampPanelWidth(width);
@@ -1534,17 +1558,22 @@ function applyPanelWidth(width, { persist = false } = {}) {
     persistPanelWidth(preferredPanelWidth);
   }
   const root = document.documentElement;
-  if (root && root.style && typeof root.style.setProperty === "function") {
+  if (!isPanelCollapsed && root && root.style && typeof root.style.setProperty === "function") {
     root.style.setProperty("--panel-w", currentPanelWidth + "px");
   }
   if (panelResizer) {
     panelResizer.setAttribute("aria-valuenow", String(currentPanelWidth));
     panelResizer.setAttribute("aria-valuemin", String(MIN_PANEL_WIDTH));
     panelResizer.setAttribute("aria-valuemax", String(computeMaxPanelWidth()));
+    if (!isPanelCollapsed) {
+      panelResizer.setAttribute("aria-expanded", "true");
+      panelResizer.setAttribute("aria-label", "Hide conversation");
+      panelResizer.title = "Click to hide conversation, drag to resize";
+    }
   }
 }
 
-/** @type {{ pointerId: any, startX: number, startWidth: number } | null} */
+/** @type {{ pointerId: any, startX: number, startWidth: number, hasDragged: boolean } | null} */
 let panelDrag = null;
 
 function clearPanelDrag() {
@@ -1554,19 +1583,36 @@ function clearPanelDrag() {
 
 function finishPanelDrag(event) {
   if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
-  preferredPanelWidth = currentPanelWidth;
-  persistPanelWidth(preferredPanelWidth);
+  if (panelResizer && typeof panelResizer.releasePointerCapture === "function") {
+    try {
+      panelResizer.releasePointerCapture(event.pointerId);
+    } catch {
+      // Ignore releasePointerCapture failure
+    }
+  }
+  const hasDragged = panelDrag.hasDragged;
   clearPanelDrag();
+  if (hasDragged) {
+    preferredPanelWidth = currentPanelWidth;
+    persistPanelWidth(preferredPanelWidth);
+  } else {
+    togglePanelCollapsed();
+  }
 }
 
 if (panelResizer) {
+  panelResizer.setAttribute("aria-expanded", "true");
+  panelResizer.setAttribute("aria-label", "Hide conversation");
+  panelResizer.title = "Click to hide conversation, drag to resize";
+
   panelResizer.addEventListener("pointerdown", (event) => {
     if (isMobileSheet() || event.button) return;
     event.preventDefault();
     panelDrag = {
       pointerId: event.pointerId,
       startX: Number(event.clientX),
-      startWidth: currentPanelWidth,
+      startWidth: isPanelCollapsed ? 0 : currentPanelWidth,
+      hasDragged: false,
     };
     if (typeof panelResizer.setPointerCapture === "function") {
       panelResizer.setPointerCapture(event.pointerId);
@@ -1577,43 +1623,72 @@ if (panelResizer) {
   panelResizer.addEventListener("pointermove", (event) => {
     if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
     const deltaX = Number(event.clientX) - panelDrag.startX;
-    // The panel sits on the right, so dragging left (negative deltaX) makes it wider.
-    const nextWidth = panelDrag.startWidth - deltaX;
-    applyPanelWidth(nextWidth, { persist: false });
+    if (!panelDrag.hasDragged && Math.abs(deltaX) > 3) {
+      panelDrag.hasDragged = true;
+      if (isPanelCollapsed) {
+        setPanelCollapsed(false);
+      }
+    }
+    if (panelDrag.hasDragged) {
+      // The panel sits on the right, so dragging left (negative deltaX) makes it wider.
+      const nextWidth = panelDrag.startWidth
+        ? panelDrag.startWidth - deltaX
+        : Math.round(window.innerWidth - Number(event.clientX));
+      applyPanelWidth(nextWidth, { persist: false });
+    }
   });
 
   panelResizer.addEventListener("pointerup", finishPanelDrag);
-  panelResizer.addEventListener("pointercancel", finishPanelDrag);
+  panelResizer.addEventListener("pointercancel", clearPanelDrag);
 
   panelResizer.addEventListener("dblclick", () => {
     if (isMobileSheet()) return;
+    if (isPanelCollapsed) setPanelCollapsed(false);
     applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
   });
 
   panelResizer.addEventListener("keydown", (event) => {
     if (isMobileSheet()) return;
-    if (event.key === "ArrowLeft") {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      applyPanelWidth(currentPanelWidth + 16, { persist: true });
+      togglePanelCollapsed();
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (isPanelCollapsed) {
+        setPanelCollapsed(false);
+      } else {
+        applyPanelWidth(currentPanelWidth + 16, { persist: true });
+      }
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      applyPanelWidth(currentPanelWidth - 16, { persist: true });
+      if (!isPanelCollapsed) {
+        if (currentPanelWidth <= MIN_PANEL_WIDTH) {
+          setPanelCollapsed(true);
+        } else {
+          applyPanelWidth(currentPanelWidth - 16, { persist: true });
+        }
+      }
     } else if (event.key === "Home") {
       event.preventDefault();
-      applyPanelWidth(MIN_PANEL_WIDTH, { persist: true });
+      setPanelCollapsed(true);
     } else if (event.key === "End") {
       event.preventDefault();
+      if (isPanelCollapsed) setPanelCollapsed(false);
       applyPanelWidth(computeMaxPanelWidth(), { persist: true });
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
     }
   });
 }
 
 function syncPanelWidthOnResize() {
   if (!isMobileSheet()) {
-    applyPanelWidth(preferredPanelWidth, { persist: false });
+    if (isPanelCollapsed) {
+      const root = document.documentElement;
+      if (root && root.style && typeof root.style.setProperty === "function") {
+        root.style.setProperty("--panel-w", "0px");
+      }
+    } else {
+      applyPanelWidth(preferredPanelWidth, { persist: false });
+    }
   }
 }
 
@@ -1621,7 +1696,11 @@ window.addEventListener("resize", syncPanelWidthOnResize);
 if (sheetMedia && typeof sheetMedia.addEventListener === "function") {
   sheetMedia.addEventListener("change", (event) => {
     if (!event.matches) {
-      applyPanelWidth(preferredPanelWidth, { persist: false });
+      if (isPanelCollapsed) {
+        setPanelCollapsed(true);
+      } else {
+        applyPanelWidth(preferredPanelWidth, { persist: false });
+      }
     }
   });
 }
