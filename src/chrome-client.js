@@ -115,6 +115,7 @@ const chatAttachButton = /** @type {HTMLButtonElement} */ (document.getElementBy
 const chatAttachInput = /** @type {HTMLInputElement} */ (document.getElementById("chatAttachInput"));
 const chatAttachmentNotice = /** @type {HTMLSpanElement} */ (document.getElementById("chatAttachmentNotice"));
 const panel = /** @type {HTMLElement} */ (document.getElementById("panel"));
+const panelResizer = /** @type {HTMLDivElement} */ (document.getElementById("panelResizer"));
 const panelHead = /** @type {HTMLDivElement} */ (document.getElementById("panelHead"));
 const panelSummary = /** @type {HTMLSpanElement} */ (document.getElementById("panelSummary"));
 const panelToggle = /** @type {HTMLButtonElement} */ (document.getElementById("panelToggle"));
@@ -1473,6 +1474,159 @@ if (window.visualViewport && typeof window.visualViewport.addEventListener === "
 }
 window.addEventListener("resize", syncVisualViewport);
 syncVisualViewport();
+
+// ---- Resizable conversation panel ----
+// On desktop the panel is a side column the user can resize by dragging its inner edge.
+// We persist their preferred width to localStorage and keep the rendered width clamped
+// so smaller desktop viewports preserve space for the artifact.
+const PANEL_WIDTH_STORAGE_KEY = "lavish-axi:panel-width";
+const DEFAULT_PANEL_WIDTH = 360;
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 1200;
+const MIN_FRAME_WIDTH = 280;
+
+function computeMaxPanelWidth(
+  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : 1200,
+) {
+  const width = Number(viewportWidth) || 1200;
+  return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, width - MIN_FRAME_WIDTH));
+}
+
+function clampPanelWidth(
+  width,
+  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : 1200,
+) {
+  const max = computeMaxPanelWidth(viewportWidth);
+  const num = Number(width);
+  const valid = Number.isFinite(num) ? num : DEFAULT_PANEL_WIDTH;
+  return Math.min(Math.max(MIN_PANEL_WIDTH, Math.round(valid)), max);
+}
+
+function readStoredPanelWidth() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return DEFAULT_PANEL_WIDTH;
+    const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+    if (!raw) return DEFAULT_PANEL_WIDTH;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : DEFAULT_PANEL_WIDTH;
+  } catch {
+    return DEFAULT_PANEL_WIDTH;
+  }
+}
+
+function persistPanelWidth(width) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(width));
+    }
+  } catch {
+    // Storage refusal only prevents persistence.
+  }
+}
+
+let preferredPanelWidth = readStoredPanelWidth();
+let currentPanelWidth = clampPanelWidth(preferredPanelWidth);
+
+function applyPanelWidth(width, { persist = false } = {}) {
+  currentPanelWidth = clampPanelWidth(width);
+  if (persist) {
+    preferredPanelWidth = currentPanelWidth;
+    persistPanelWidth(preferredPanelWidth);
+  }
+  const root = document.documentElement;
+  if (root && root.style && typeof root.style.setProperty === "function") {
+    root.style.setProperty("--panel-w", currentPanelWidth + "px");
+  }
+  if (panelResizer) {
+    panelResizer.setAttribute("aria-valuenow", String(currentPanelWidth));
+    panelResizer.setAttribute("aria-valuemin", String(MIN_PANEL_WIDTH));
+    panelResizer.setAttribute("aria-valuemax", String(computeMaxPanelWidth()));
+  }
+}
+
+/** @type {{ pointerId: any, startX: number, startWidth: number } | null} */
+let panelDrag = null;
+
+function clearPanelDrag() {
+  panelDrag = null;
+  document.body.classList.remove("is-resizing-panel");
+}
+
+function finishPanelDrag(event) {
+  if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
+  preferredPanelWidth = currentPanelWidth;
+  persistPanelWidth(preferredPanelWidth);
+  clearPanelDrag();
+}
+
+if (panelResizer) {
+  panelResizer.addEventListener("pointerdown", (event) => {
+    if (isMobileSheet() || event.button) return;
+    event.preventDefault();
+    panelDrag = {
+      pointerId: event.pointerId,
+      startX: Number(event.clientX),
+      startWidth: currentPanelWidth,
+    };
+    if (typeof panelResizer.setPointerCapture === "function") {
+      panelResizer.setPointerCapture(event.pointerId);
+    }
+    document.body.classList.add("is-resizing-panel");
+  });
+
+  panelResizer.addEventListener("pointermove", (event) => {
+    if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
+    const deltaX = Number(event.clientX) - panelDrag.startX;
+    // The panel sits on the right, so dragging left (negative deltaX) makes it wider.
+    const nextWidth = panelDrag.startWidth - deltaX;
+    applyPanelWidth(nextWidth, { persist: false });
+  });
+
+  panelResizer.addEventListener("pointerup", finishPanelDrag);
+  panelResizer.addEventListener("pointercancel", finishPanelDrag);
+
+  panelResizer.addEventListener("dblclick", () => {
+    if (isMobileSheet()) return;
+    applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
+  });
+
+  panelResizer.addEventListener("keydown", (event) => {
+    if (isMobileSheet()) return;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applyPanelWidth(currentPanelWidth + 16, { persist: true });
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applyPanelWidth(currentPanelWidth - 16, { persist: true });
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyPanelWidth(MIN_PANEL_WIDTH, { persist: true });
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applyPanelWidth(computeMaxPanelWidth(), { persist: true });
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
+    }
+  });
+}
+
+function syncPanelWidthOnResize() {
+  if (!isMobileSheet()) {
+    applyPanelWidth(preferredPanelWidth, { persist: false });
+  }
+}
+
+window.addEventListener("resize", syncPanelWidthOnResize);
+if (sheetMedia && typeof sheetMedia.addEventListener === "function") {
+  sheetMedia.addEventListener("change", (event) => {
+    if (!event.matches) {
+      applyPanelWidth(preferredPanelWidth, { persist: false });
+    }
+  });
+}
+
+applyPanelWidth(preferredPanelWidth, { persist: false });
 
 function scrollElementIntoView(el) {
   el.scrollIntoView({ block: "nearest", inline: "nearest" });
