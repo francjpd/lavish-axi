@@ -7282,11 +7282,13 @@ test("dragging the panel resizer expands and shrinks the panel and persists the 
   const resizer = chrome.element("panelResizer");
 
   // Initial width 360px. Resizer sits at x = 1200 - 360 = 840.
-  // Dragging left (from 840 to 740, delta = -100) widens the panel by 100px to 460px.
+  // Pointerdown records start point but does NOT enter resize mode yet
   resizer.dispatch("pointerdown", { pointerId: 1, clientX: 840, button: 0, preventDefault() {} });
-  assert.equal(body.classList.contains("is-resizing-panel"), true);
+  assert.equal(body.classList.contains("is-resizing-panel"), false);
 
+  // Dragging past threshold enters resize mode and widens the panel
   resizer.dispatch("pointermove", { pointerId: 1, clientX: 740 });
+  assert.equal(body.classList.contains("is-resizing-panel"), true);
   assert.equal(chrome.element("html").style["--panel-w"], "460px");
   assert.equal(resizer["aria-valuenow"], "460");
   // Not yet persisted until pointerup
@@ -7295,6 +7297,11 @@ test("dragging the panel resizer expands and shrinks the panel and persists the 
   resizer.dispatch("pointerup", { pointerId: 1, clientX: 740 });
   assert.equal(body.classList.contains("is-resizing-panel"), false);
   assert.equal(chrome.storage.get("lavish-axi:panel-width"), "460");
+
+  // Moving cursor after pointerup does NOT trigger resizing
+  resizer.dispatch("pointermove", { pointerId: 1, clientX: 600 });
+  assert.equal(chrome.element("html").style["--panel-w"], "460px");
+  assert.equal(body.classList.contains("is-resizing-panel"), false);
 
   // Dragging right shrinks the panel
   resizer.dispatch("pointerdown", { pointerId: 2, clientX: 740, button: 0, preventDefault() {} });

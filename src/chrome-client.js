@@ -1573,6 +1573,8 @@ function applyPanelWidth(width, { persist = false } = {}) {
   }
 }
 
+const RESIZE_DRAG_THRESHOLD_PX = 4;
+
 /** @type {{ pointerId: any, startX: number, startWidth: number, hasDragged: boolean } | null} */
 let panelDrag = null;
 
@@ -1582,16 +1584,18 @@ function clearPanelDrag() {
 }
 
 function finishPanelDrag(event) {
-  if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
+  if (!panelDrag) return;
+  if (event && event.pointerId !== undefined && event.pointerId !== panelDrag.pointerId) return;
+  const hasDragged = panelDrag.hasDragged;
+  const pointerId = panelDrag.pointerId;
+  clearPanelDrag();
   if (panelResizer && typeof panelResizer.releasePointerCapture === "function") {
     try {
-      panelResizer.releasePointerCapture(event.pointerId);
+      panelResizer.releasePointerCapture(pointerId);
     } catch {
       // Ignore releasePointerCapture failure
     }
   }
-  const hasDragged = panelDrag.hasDragged;
-  clearPanelDrag();
   if (hasDragged) {
     preferredPanelWidth = currentPanelWidth;
     persistPanelWidth(preferredPanelWidth);
@@ -1615,16 +1619,20 @@ if (panelResizer) {
       hasDragged: false,
     };
     if (typeof panelResizer.setPointerCapture === "function") {
-      panelResizer.setPointerCapture(event.pointerId);
+      try {
+        panelResizer.setPointerCapture(event.pointerId);
+      } catch {
+        // Ignore setPointerCapture failure
+      }
     }
-    document.body.classList.add("is-resizing-panel");
   });
 
   panelResizer.addEventListener("pointermove", (event) => {
     if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
     const deltaX = Number(event.clientX) - panelDrag.startX;
-    if (!panelDrag.hasDragged && Math.abs(deltaX) > 3) {
+    if (!panelDrag.hasDragged && Math.abs(deltaX) >= RESIZE_DRAG_THRESHOLD_PX) {
       panelDrag.hasDragged = true;
+      document.body.classList.add("is-resizing-panel");
       if (isPanelCollapsed) {
         setPanelCollapsed(false);
       }
@@ -1640,6 +1648,9 @@ if (panelResizer) {
 
   panelResizer.addEventListener("pointerup", finishPanelDrag);
   panelResizer.addEventListener("pointercancel", clearPanelDrag);
+  panelResizer.addEventListener("lostpointercapture", clearPanelDrag);
+  window.addEventListener("pointerup", finishPanelDrag);
+  window.addEventListener("pointercancel", clearPanelDrag);
 
   panelResizer.addEventListener("dblclick", () => {
     if (isMobileSheet()) return;
