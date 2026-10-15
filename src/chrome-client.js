@@ -1484,17 +1484,18 @@ const DEFAULT_PANEL_WIDTH = 360;
 const MIN_PANEL_WIDTH = 280;
 const MAX_PANEL_WIDTH = 1200;
 const MIN_FRAME_WIDTH = 280;
+const FALLBACK_VIEWPORT_WIDTH = 1200;
 
 function computeMaxPanelWidth(
-  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : 1200,
+  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : FALLBACK_VIEWPORT_WIDTH,
 ) {
-  const width = Number(viewportWidth) || 1200;
+  const width = Number(viewportWidth) || FALLBACK_VIEWPORT_WIDTH;
   return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, width - MIN_FRAME_WIDTH));
 }
 
 function clampPanelWidth(
   width,
-  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : 1200,
+  viewportWidth = typeof window !== "undefined" && window.innerWidth > 0 ? window.innerWidth : FALLBACK_VIEWPORT_WIDTH,
 ) {
   const max = computeMaxPanelWidth(viewportWidth);
   const num = Number(width);
