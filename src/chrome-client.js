@@ -1579,20 +1579,6 @@ function applyPanelWidth(width, { persist = false } = {}) {
 }
 
 const RESIZE_DRAG_THRESHOLD_PX = 4;
-const DOUBLE_CLICK_DELAY_MS = 250;
-
-/** @type {any} */
-let panelClickTimer = null;
-
-function resetPanelWidth() {
-  if (isMobileSheet()) return;
-  if (panelClickTimer) {
-    clearTimeout(panelClickTimer);
-    panelClickTimer = null;
-  }
-  if (isPanelCollapsed) setPanelCollapsed(false);
-  applyPanelWidth(DEFAULT_PANEL_WIDTH, { persist: true });
-}
 
 /** @type {{ pointerId: any, startX: number, startWidth: number, hasDragged: boolean } | null} */
 let panelDrag = null;
@@ -1616,21 +1602,10 @@ function finishPanelDrag(event) {
     }
   }
   if (hasDragged) {
-    if (panelClickTimer) {
-      clearTimeout(panelClickTimer);
-      panelClickTimer = null;
-    }
     preferredPanelWidth = currentPanelWidth;
     persistPanelWidth(preferredPanelWidth);
-  } else if (panelClickTimer) {
-    clearTimeout(panelClickTimer);
-    panelClickTimer = null;
-    resetPanelWidth();
   } else {
-    panelClickTimer = setTimeout(() => {
-      panelClickTimer = null;
-      togglePanelCollapsed();
-    }, DOUBLE_CLICK_DELAY_MS);
+    togglePanelCollapsed();
   }
 }
 
@@ -1661,10 +1636,6 @@ if (panelResizer) {
     if (!panelDrag || event.pointerId !== panelDrag.pointerId) return;
     const deltaX = Number(event.clientX) - panelDrag.startX;
     if (!panelDrag.hasDragged && Math.abs(deltaX) >= RESIZE_DRAG_THRESHOLD_PX) {
-      if (panelClickTimer) {
-        clearTimeout(panelClickTimer);
-        panelClickTimer = null;
-      }
       panelDrag.hasDragged = true;
       document.body.classList.add("is-resizing-panel");
       if (isPanelCollapsed) {
@@ -1686,16 +1657,8 @@ if (panelResizer) {
   window.addEventListener("pointerup", finishPanelDrag);
   window.addEventListener("pointercancel", clearPanelDrag);
 
-  panelResizer.addEventListener("dblclick", () => {
-    resetPanelWidth();
-  });
-
   panelResizer.addEventListener("keydown", (event) => {
     if (isMobileSheet()) return;
-    if (panelClickTimer) {
-      clearTimeout(panelClickTimer);
-      panelClickTimer = null;
-    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       togglePanelCollapsed();
@@ -1715,13 +1678,6 @@ if (panelResizer) {
           applyPanelWidth(currentPanelWidth - 16, { persist: true });
         }
       }
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setPanelCollapsed(true);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      if (isPanelCollapsed) setPanelCollapsed(false);
-      applyPanelWidth(computeMaxPanelWidth(), { persist: true });
     }
   });
 }

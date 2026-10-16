@@ -7330,7 +7330,7 @@ test("panel resizing is clamped to minimum width and viewport-preserving maximum
   assert.equal(chrome.storage.get("lavish-axi:panel-width"), "920");
 });
 
-test("clicking the panel resizer toggles collapse and expand after double-click delay", async () => {
+test("clicking the panel resizer toggles collapse and expand immediately", async () => {
   const chrome = await createChromeHarness();
   const body = chrome.element("body");
   const resizer = chrome.element("panelResizer");
@@ -7340,65 +7340,23 @@ test("clicking the panel resizer toggles collapse and expand after double-click 
   assert.equal(resizer["aria-expanded"], "true");
   assert.equal(resizer["aria-label"], "Hide conversation");
 
-  // Click without drag waits for double-click window before collapsing
+  // Click without drag collapses the panel immediately
   resizer.dispatch("pointerdown", { pointerId: 1, clientX: 840, button: 0, preventDefault() {} });
   resizer.dispatch("pointerup", { pointerId: 1, clientX: 840 });
-
-  assert.equal(body.classList.contains("panel-collapsed"), false);
-  chrome.runTimers(250);
 
   assert.equal(body.classList.contains("panel-collapsed"), true);
   assert.equal(chrome.element("html").style["--panel-w"], "0px");
   assert.equal(resizer["aria-expanded"], "false");
   assert.equal(resizer["aria-label"], "Show conversation");
 
-  // Second click expands the panel back to preferred width (360px) after delay
+  // Second click expands the panel back to preferred width (360px) immediately
   resizer.dispatch("pointerdown", { pointerId: 1, clientX: 1200, button: 0, preventDefault() {} });
   resizer.dispatch("pointerup", { pointerId: 1, clientX: 1200 });
-  chrome.runTimers(250);
 
   assert.equal(body.classList.contains("panel-collapsed"), false);
   assert.equal(chrome.element("html").style["--panel-w"], "360px");
   assert.equal(resizer["aria-expanded"], "true");
   assert.equal(resizer["aria-label"], "Hide conversation");
-});
-
-test("double-clicking the panel resizer resets the width to the default 360px and uncollapses", async () => {
-  const storage = new Map([["lavish-axi:panel-width", "500"]]);
-  const chrome = await createChromeHarness({ storage });
-  assert.equal(chrome.element("html").style["--panel-w"], "500px");
-
-  chrome.element("panelResizer").dispatch("dblclick", {});
-  assert.equal(chrome.element("html").style["--panel-w"], "360px");
-  assert.equal(chrome.storage.get("lavish-axi:panel-width"), "360");
-});
-
-test("double-clicking via full pointer sequence resets width to 360px without collapsing first", async () => {
-  const storage = new Map([["lavish-axi:panel-width", "520"]]);
-  const chrome = await createChromeHarness({ storage });
-  const body = chrome.element("body");
-  const resizer = chrome.element("panelResizer");
-  assert.equal(chrome.element("html").style["--panel-w"], "520px");
-
-  // First click: pointerdown + pointerup
-  resizer.dispatch("pointerdown", { pointerId: 1, clientX: 680, button: 0, preventDefault() {} });
-  resizer.dispatch("pointerup", { pointerId: 1, clientX: 680 });
-  // Panel does not immediately collapse, keeping separator under the pointer
-  assert.equal(body.classList.contains("panel-collapsed"), false);
-
-  // Second click lands before the 250ms delay expires
-  resizer.dispatch("pointerdown", { pointerId: 1, clientX: 680, button: 0, preventDefault() {} });
-  resizer.dispatch("pointerup", { pointerId: 1, clientX: 680 });
-
-  // Resets to 360px default and persists
-  assert.equal(chrome.element("html").style["--panel-w"], "360px");
-  assert.equal(chrome.storage.get("lavish-axi:panel-width"), "360");
-  assert.equal(body.classList.contains("panel-collapsed"), false);
-
-  // Timer expiry does not collapse the panel
-  chrome.runTimers(250);
-  assert.equal(body.classList.contains("panel-collapsed"), false);
-  assert.equal(chrome.element("html").style["--panel-w"], "360px");
 });
 
 test("reopening a collapsed panel after shrinking the window clamps width to the current viewport", async () => {
@@ -7410,7 +7368,6 @@ test("reopening a collapsed panel after shrinking the window clamps width to the
   const resizer = chrome.element("panelResizer");
   resizer.dispatch("pointerdown", { pointerId: 1, clientX: 300, button: 0, preventDefault() {} });
   resizer.dispatch("pointerup", { pointerId: 1, clientX: 300 });
-  chrome.runTimers(250);
   assert.equal(chrome.element("html").style["--panel-w"], "0px");
 
   // Shrink the window to 900px while collapsed. Max allowed width is 900 - 280 = 620px.
@@ -7420,7 +7377,6 @@ test("reopening a collapsed panel after shrinking the window clamps width to the
   // Reopen the panel
   resizer.dispatch("pointerdown", { pointerId: 1, clientX: 900, button: 0, preventDefault() {} });
   resizer.dispatch("pointerup", { pointerId: 1, clientX: 900 });
-  chrome.runTimers(250);
 
   // Clamped to 620px so artifact is not squeezed to 0
   assert.equal(chrome.element("html").style["--panel-w"], "620px");
@@ -7432,7 +7388,7 @@ test("reopening a collapsed panel after shrinking the window clamps width to the
   assert.equal(chrome.element("html").style["--panel-w"], "900px");
 });
 
-test("keyboard navigation on the resizer allows step resizing, toggle, and extremes", async () => {
+test("keyboard navigation on the resizer allows step resizing and toggle", async () => {
   const chrome = await createChromeHarness();
   const resizer = chrome.element("panelResizer");
   const body = chrome.element("body");
@@ -7447,8 +7403,8 @@ test("keyboard navigation on the resizer allows step resizing, toggle, and extre
   resizer.dispatch("keydown", { key: "ArrowRight", preventDefault() {} });
   assert.equal(chrome.element("html").style["--panel-w"], "360px");
 
-  // Home collapses the panel
-  resizer.dispatch("keydown", { key: "Home", preventDefault() {} });
+  // Enter toggles collapse
+  resizer.dispatch("keydown", { key: "Enter", preventDefault() {} });
   assert.equal(body.classList.contains("panel-collapsed"), true);
   assert.equal(chrome.element("html").style["--panel-w"], "0px");
 
@@ -7457,19 +7413,15 @@ test("keyboard navigation on the resizer allows step resizing, toggle, and extre
   assert.equal(body.classList.contains("panel-collapsed"), false);
   assert.equal(chrome.element("html").style["--panel-w"], "360px");
 
-  // Enter toggles collapse
-  resizer.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  // Space toggles uncollapse
+  resizer.dispatch("keydown", { key: " ", preventDefault() {} });
   assert.equal(body.classList.contains("panel-collapsed"), true);
   assert.equal(chrome.element("html").style["--panel-w"], "0px");
 
-  // Space toggles uncollapse
+  // Space again toggles back
   resizer.dispatch("keydown", { key: " ", preventDefault() {} });
   assert.equal(body.classList.contains("panel-collapsed"), false);
   assert.equal(chrome.element("html").style["--panel-w"], "360px");
-
-  // End jumps to max (920px)
-  resizer.dispatch("keydown", { key: "End", preventDefault() {} });
-  assert.equal(chrome.element("html").style["--panel-w"], "920px");
 });
 
 test("viewport resize clamps active panel width without losing the user's larger preference", async () => {
