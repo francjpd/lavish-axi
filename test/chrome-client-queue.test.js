@@ -7434,6 +7434,27 @@ test("viewport resize clamps active panel width without losing the user's larger
   assert.equal(chrome.element("html").style["--panel-w"], "600px");
 });
 
+test("keyboard stepping at the viewport maximum does not overwrite the stored preference", async () => {
+  const storage = new Map([["lavish-axi:panel-width", "900"]]);
+  const chrome = await createChromeHarness({ storage });
+  const resizer = chrome.element("panelResizer");
+  assert.equal(chrome.element("html").style["--panel-w"], "900px");
+
+  // Shrink viewport to 1000px. Max panel allowed = 1000 - 280 = 720px.
+  chrome.setWindowWidth(1000);
+  assert.equal(chrome.element("html").style["--panel-w"], "720px");
+  assert.equal(chrome.storage.get("lavish-axi:panel-width"), "900");
+
+  // Stepping wider is clamped to 720px and must not clobber the stored 900px preference.
+  resizer.dispatch("keydown", { key: "ArrowLeft", preventDefault() {} });
+  assert.equal(chrome.element("html").style["--panel-w"], "720px");
+  assert.equal(chrome.storage.get("lavish-axi:panel-width"), "900");
+
+  // Widening the viewport restores the user's preferred 900px.
+  chrome.setWindowWidth(1200);
+  assert.equal(chrome.element("html").style["--panel-w"], "900px");
+});
+
 test("phone chrome ignores resizer gestures and keeps resizer inactive", async () => {
   const chrome = await createChromeHarness({ mobile: true });
   const resizer = chrome.element("panelResizer");

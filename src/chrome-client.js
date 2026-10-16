@@ -1557,8 +1557,11 @@ function togglePanelCollapsed() {
 }
 
 function applyPanelWidth(width, { persist = false } = {}) {
+  const maxPanelWidth = computeMaxPanelWidth();
+  const requested = Number(width);
+  const renderable = Number.isFinite(requested) && requested >= MIN_PANEL_WIDTH && requested <= maxPanelWidth;
   currentPanelWidth = clampPanelWidth(width);
-  if (persist) {
+  if (persist && renderable) {
     preferredPanelWidth = currentPanelWidth;
     persistPanelWidth(preferredPanelWidth);
   }
