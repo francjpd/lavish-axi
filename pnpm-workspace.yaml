@@ -8,9 +8,8 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeExclude:
   - axi-sdk-js
   - lavish-axi
+  - wire-axi
 onlyBuiltDependencies:
   - esbuild
 allowBuilds:
   esbuild: true
-overrides:
-  wire-axi: link:../../../../Projects/firstmate/projects/wire-axi

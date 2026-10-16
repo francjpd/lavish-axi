@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  wire-axi: link:../../../../Projects/firstmate/projects/wire-axi
-
 importers:
   .:
     dependencies:
@@ -35,8 +32,8 @@ importers:
         specifier: ^8.0.1
         version: 8.0.1
       wire-axi:
-        specifier: link:../../../../Projects/firstmate/projects/wire-axi
-        version: link:../../../../Projects/firstmate/projects/wire-axi
+        specifier: ^0.1.1
+        version: 0.1.1
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -2274,6 +2271,12 @@ packages:
     engines: { node: ">= 8" }
     hasBin: true
 
+  wire-axi@0.1.1:
+    resolution:
+      { integrity: sha512-zwMYteGBe9fyj/5P0VIUGt8Z/NUFeEByB8MxRmpkpAFMvQ/rcrrWQL/AgQfjHD5Qotp+TGRY0530XuNDHrIsCw== }
+    engines: { node: ">=22.0.0" }
+    hasBin: true
+
   word-wrap@1.2.5:
     resolution:
       { integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA== }
@@ -4060,6 +4063,8 @@ snapshots:
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
+
+  wire-axi@0.1.1: {}
 
   word-wrap@1.2.5: {}
 

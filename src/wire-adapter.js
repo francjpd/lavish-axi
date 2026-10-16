@@ -14,5 +14,5 @@ export class WireFrameError extends Error {
   }
 }
 
-export class WireChannel extends Channel {}
-export class WireSessionManager extends SessionManager {}
+export const WireChannel = Channel;
+export const WireSessionManager = SessionManager;
