@@ -39,6 +39,7 @@
     "express": "^5.2.1",
     "open": "^10.2.0",
     "parse5": "^8.0.1",
+    "wire-axi": "link:../../../../Projects/firstmate/projects/wire-axi",
     "ws": "^8.21.3"
   },
   "devDependencies": {

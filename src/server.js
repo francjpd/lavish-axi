@@ -58,15 +58,7 @@ import { hostRejectedShareWrite, publishedDespiteError, publishToHtmlApp } from 
 import { serializeChat, serializeChatAckIds, serializeChatSync } from "./chat-messages.js";
 import { formatServerLogLine, serverStdioIsTimestamped } from "./server-log.js";
 import { injectLavishSdk } from "./html-transform.js";
-import {
-  FLAGS,
-  OPCODES,
-  WireSessionManager,
-  decodeFrame,
-  encodeFrame,
-  formatParams,
-  parseParams,
-} from "./wire-transport.js";
+import { FLAGS, OPCODES, SessionManager, decodeFrame, encodeFrame, formatParams, parseParams } from "wire-axi";
 import {
   bindHost,
   extraAllowedHosts,
@@ -349,7 +341,7 @@ export async function serve({
   // being reopened and leave every other open review page on screen. Current chromes use a
   // WebSocket, while the legacy SSE route remains available during rolling local upgrades.
   const liveEventClients = new Map();
-  const wireSessions = new WireSessionManager();
+  const wireSessions = new SessionManager();
   const activeWireSockets = new Map();
   const browserDisconnectTimers = new Map();
   const browserDisconnectPending = new Set();
@@ -2091,7 +2083,7 @@ export async function serve({
         encodeFrame({
           type: OPCODES.CLOSE,
           seqId: 0,
-          channel: "session",
+          channel: key,
           flags: FLAGS.NONE,
           payload: JSON.stringify({ status: "error", code: "NOT_FOUND", error: "session not found" }),
         }),
@@ -2135,7 +2127,7 @@ export async function serve({
         encodeFrame({
           type: OPCODES.CLOSE,
           seqId: 0,
-          channel: "session",
+          channel: key,
           flags: FLAGS.NONE,
           payload: JSON.stringify(conflict),
         }),
@@ -2153,7 +2145,7 @@ export async function serve({
           encodeFrame({
             type: OPCODES.CLOSE,
             seqId: channel.lastSeq,
-            channel: "session",
+            channel: key,
             flags: FLAGS.NONE,
             payload: JSON.stringify({
               code: "LISTENER_REPLACED",
@@ -2204,10 +2196,9 @@ export async function serve({
       for (const msg of missed) {
         pushWireFrame(
           encodeFrame({
-            type: OPCODES.PUSH,
+            type: OPCODES.MESSAGE,
             seqId: msg.seqId,
-            seq: msg.seqId,
-            channel: "feedback",
+            channel: key,
             flags: msg.rawFlags,
             payload: msg.payload,
           }),
@@ -2228,10 +2219,9 @@ export async function serve({
             finishFeedbackDelivery(key, pending);
             pushWireFrame(
               encodeFrame({
-                type: OPCODES.PUSH,
+                type: OPCODES.MESSAGE,
                 seqId: published.seqId,
-                seq: published.seqId,
-                channel: "feedback",
+                channel: key,
                 flags: published.rawFlags,
                 payload: published.payload,
               }),
@@ -2249,10 +2239,9 @@ export async function serve({
     if (session.status === "ended") {
       pushWireFrame(
         encodeFrame({
-          type: OPCODES.END,
+          type: OPCODES.CLOSE,
           seqId: channel.lastSeq,
-          seq: channel.lastSeq,
-          channel: "session",
+          channel: key,
           flags: FLAGS.END_SESSION,
           payload: JSON.stringify({ status: "ended", ended_by: session.ended_by || "user" }),
         }),
@@ -2273,10 +2262,9 @@ export async function serve({
             finishFeedbackDelivery(key, result);
             pushWireFrame(
               encodeFrame({
-                type: OPCODES.PUSH,
+                type: OPCODES.MESSAGE,
                 seqId: published.seqId,
-                seq: published.seqId,
-                channel: "feedback",
+                channel: key,
                 flags: published.rawFlags,
                 payload: published.payload,
               }),
@@ -2299,10 +2287,9 @@ export async function serve({
       });
       pushWireFrame(
         encodeFrame({
-          type: OPCODES.END,
+          type: OPCODES.CLOSE,
           seqId: published.seqId,
-          seq: published.seqId,
-          channel: "session",
+          channel: key,
           flags: FLAGS.END_SESSION,
           payload: published.payload,
         }),
@@ -2318,10 +2305,9 @@ export async function serve({
       });
       pushWireFrame(
         encodeFrame({
-          type: OPCODES.PUSH,
+          type: OPCODES.MESSAGE,
           seqId: published.seqId,
-          seq: published.seqId,
-          channel: "feedback",
+          channel: key,
           flags: published.rawFlags,
           payload: published.payload,
         }),
@@ -2366,10 +2352,9 @@ export async function serve({
           for (const msg of missed) {
             pushWireFrame(
               encodeFrame({
-                type: OPCODES.PUSH,
+                type: OPCODES.MESSAGE,
                 seqId: msg.seqId,
-                seq: msg.seqId,
-                channel: "feedback",
+                channel: key,
                 flags: msg.rawFlags,
                 payload: msg.payload,
               }),
@@ -2382,7 +2367,7 @@ export async function serve({
         }
       } else if (frame.type === OPCODES.ACK) {
         channel.acknowledge(frame.seqId);
-      } else if (frame.type === OPCODES.MESSAGE || frame.type === OPCODES.PUSH) {
+      } else if (frame.type === OPCODES.MESSAGE) {
         let replyText = frame.payload;
         try {
           const parsed = JSON.parse(frame.payload);
@@ -2405,7 +2390,7 @@ export async function serve({
         );
         clientExpectingReply = false;
         deliverPendingFeedback().catch(() => {});
-      } else if (frame.type === OPCODES.CLOSE || frame.type === OPCODES.END) {
+      } else if (frame.type === OPCODES.CLOSE) {
         webSocket.close();
       }
     };

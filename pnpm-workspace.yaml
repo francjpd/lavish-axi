@@ -12,3 +12,5 @@ onlyBuiltDependencies:
   - esbuild
 allowBuilds:
   esbuild: true
+overrides:
+  wire-axi: link:../../../../Projects/firstmate/projects/wire-axi

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { WireClient } from "./wire-transport.js";
+import { WireClient } from "wire-axi";
 import { POLL_WAKE_PATH_RULES } from "./cli.js";
 
 export const BENCHMARK_PROBE_TAG = "[benchmark probe - do not act]";

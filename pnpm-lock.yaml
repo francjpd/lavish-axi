@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  wire-axi: link:../../../../Projects/firstmate/projects/wire-axi
+
 importers:
   .:
     dependencies:
@@ -31,6 +34,9 @@ importers:
       parse5:
         specifier: ^8.0.1
         version: 8.0.1
+      wire-axi:
+        specifier: link:../../../../Projects/firstmate/projects/wire-axi
+        version: link:../../../../Projects/firstmate/projects/wire-axi
       ws:
         specifier: ^8.21.3
         version: 8.21.3
