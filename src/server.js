@@ -2061,7 +2061,112 @@ export async function serve({
 
   const wireWebSocketServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
-  function attachWireClient(webSocket, key, { initialLastSeenSeq = 0 } = {}) {
+  async function attachWireClient(
+    webSocket,
+    key,
+    { initialLastSeenSeq = 0, initialHasReply = false, initialTakeover = false } = {},
+  ) {
+    webSocket.on("error", () => {});
+
+    /** @type {any[]} */
+    const pendingMessages = [];
+    /** @type {(data: any) => any} */
+    let messageHandler = (data) => {
+      pendingMessages.push(data);
+    };
+    webSocket.on("message", (data) => {
+      messageHandler(data);
+    });
+
+    const pushWireFrame = (frameStr) => {
+      if (webSocket.readyState === WebSocket.OPEN) {
+        webSocket.send(frameStr);
+      }
+    };
+
+    // Reject missing sessions immediately
+    const session = await store.findByKey(key);
+    if (!session || session.status === "missing") {
+      pushWireFrame(
+        encodeFrame({
+          type: OPCODES.CLOSE,
+          seqId: 0,
+          channel: "session",
+          flags: FLAGS.NONE,
+          payload: JSON.stringify({ status: "error", code: "NOT_FOUND", error: "session not found" }),
+        }),
+      );
+      webSocket.close(1008, "NOT_FOUND");
+      return;
+    }
+
+    // Listener exclusivity with activePolls under pollOwnershipLock
+    /** @type {any} */
+    let holder = null;
+    const { conflict } = await pollOwnershipLock.runExclusive(async () => {
+      const currentHolder = activePolls.get(key);
+      const isDeadSocket = currentHolder?.wire && currentHolder.webSocket && currentHolder.webSocket.readyState !== 1;
+      if (currentHolder && !initialTakeover && !isDeadSocket) {
+        return { conflict: listenerConflict(currentHolder, "LISTENER_ACTIVE") };
+      }
+      const nextHolder = {
+        key,
+        owner: null,
+        startedAt: Date.now(),
+        replaced: false,
+        replace: null,
+        wire: true,
+        webSocket,
+      };
+      holder = nextHolder;
+      if (currentHolder) {
+        currentHolder.replaced = true;
+        activePolls.set(key, nextHolder);
+        currentHolder.replace?.();
+      } else {
+        activePolls.set(key, nextHolder);
+      }
+      deliveredFeedback.delete(key);
+      return {};
+    });
+
+    if (conflict) {
+      pushWireFrame(
+        encodeFrame({
+          type: OPCODES.CLOSE,
+          seqId: 0,
+          channel: "session",
+          flags: FLAGS.NONE,
+          payload: JSON.stringify(conflict),
+        }),
+      );
+      webSocket.close(1008, "LISTENER_ACTIVE");
+      return;
+    }
+
+    const channel = wireSessions.getOrCreateChannel(key);
+
+    if (!holder) return;
+    holder.replace = () => {
+      try {
+        pushWireFrame(
+          encodeFrame({
+            type: OPCODES.CLOSE,
+            seqId: channel.lastSeq,
+            channel: "session",
+            flags: FLAGS.NONE,
+            payload: JSON.stringify({
+              code: "LISTENER_REPLACED",
+              error: "Lavish Editor poll listener was replaced by a takeover",
+            }),
+          }),
+        );
+        webSocket.close(1000, "LISTENER_REPLACED");
+      } catch {
+        // ignore
+      }
+    };
+
     let sockets = activeWireSockets.get(key);
     if (!sockets) {
       sockets = new Set();
@@ -2070,10 +2175,7 @@ export async function serve({
     sockets.add(webSocket);
     events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback, activeWireSockets));
 
-    const channel = wireSessions.getOrCreateChannel(key);
     channel.subscribe(webSocket);
-
-    webSocket.on("error", () => {});
 
     let heartbeat = null;
     if (liveEventHeartbeatMs != null && liveEventHeartbeatMs > 0) {
@@ -2097,12 +2199,6 @@ export async function serve({
       });
     }
 
-    const pushWireFrame = (frameStr) => {
-      if (webSocket.readyState === WebSocket.OPEN) {
-        webSocket.send(frameStr);
-      }
-    };
-
     if (initialLastSeenSeq > 0 && initialLastSeenSeq < channel.lastSeq) {
       const missed = channel.replaySince(initialLastSeenSeq);
       for (const msg of missed) {
@@ -2119,71 +2215,75 @@ export async function serve({
       }
     }
 
-    // Deliver any feedback already pending in store
-    store
-      .takeFeedback(key)
-      .then((pending) => {
-        if (pending && pending.status === "feedback" && webSocket.readyState === WebSocket.OPEN) {
-          const published = channel.publish({
-            payload: JSON.stringify(agentFacingFeedback(pending)),
-            flags: FLAGS.REQUIRES_ACK,
-            sender: "human",
-          });
-          finishFeedbackDelivery(key, pending);
-          pushWireFrame(
-            encodeFrame({
-              type: OPCODES.PUSH,
-              seqId: published.seqId,
-              seq: published.seqId,
-              channel: "feedback",
-              flags: published.rawFlags,
-              payload: published.payload,
-            }),
-          );
+    const deliverPendingFeedback = async () => {
+      try {
+        const pending = await store.takeFeedback(key);
+        if (pending && pending.status === "feedback") {
+          if (webSocket.readyState === WebSocket.OPEN) {
+            const published = channel.publish({
+              payload: JSON.stringify(agentFacingFeedback(pending)),
+              flags: FLAGS.REQUIRES_ACK,
+              sender: "human",
+            });
+            finishFeedbackDelivery(key, pending);
+            pushWireFrame(
+              encodeFrame({
+                type: OPCODES.PUSH,
+                seqId: published.seqId,
+                seq: published.seqId,
+                channel: "feedback",
+                flags: published.rawFlags,
+                payload: published.payload,
+              }),
+            );
+          } else {
+            await restoreClosedFeedback(key, pending);
+          }
         }
-      })
-      .catch(() => {});
+      } catch (err) {
+        writeLog(`[lavish] wire transport takeFeedback error: ${err?.message || err}`);
+      }
+    };
 
     // Notify if session was already ended
-    store
-      .findByKey(key)
-      .then((session) => {
-        if (session && session.status === "ended" && webSocket.readyState === WebSocket.OPEN) {
-          pushWireFrame(
-            encodeFrame({
-              type: OPCODES.END,
-              seqId: channel.lastSeq,
-              seq: channel.lastSeq,
-              channel: "session",
-              flags: FLAGS.END_SESSION,
-              payload: JSON.stringify({ status: "ended", ended_by: session.ended_by || "user" }),
-            }),
-          );
-        }
-      })
-      .catch(() => {});
+    if (session.status === "ended") {
+      pushWireFrame(
+        encodeFrame({
+          type: OPCODES.END,
+          seqId: channel.lastSeq,
+          seq: channel.lastSeq,
+          channel: "session",
+          flags: FLAGS.END_SESSION,
+          payload: JSON.stringify({ status: "ended", ended_by: session.ended_by || "user" }),
+        }),
+      );
+    }
 
     const onFeedback = async (changedKey) => {
       if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN) return;
       try {
         const result = await store.takeFeedback(key);
         if (result && result.status === "feedback") {
-          const published = channel.publish({
-            payload: JSON.stringify(agentFacingFeedback(result)),
-            flags: FLAGS.REQUIRES_ACK,
-            sender: "human",
-          });
-          finishFeedbackDelivery(key, result);
-          pushWireFrame(
-            encodeFrame({
-              type: OPCODES.PUSH,
-              seqId: published.seqId,
-              seq: published.seqId,
-              channel: "feedback",
-              flags: published.rawFlags,
-              payload: published.payload,
-            }),
-          );
+          if (webSocket.readyState === WebSocket.OPEN) {
+            const published = channel.publish({
+              payload: JSON.stringify(agentFacingFeedback(result)),
+              flags: FLAGS.REQUIRES_ACK,
+              sender: "human",
+            });
+            finishFeedbackDelivery(key, result);
+            pushWireFrame(
+              encodeFrame({
+                type: OPCODES.PUSH,
+                seqId: published.seqId,
+                seq: published.seqId,
+                channel: "feedback",
+                flags: published.rawFlags,
+                payload: published.payload,
+              }),
+            );
+          } else {
+            await restoreClosedFeedback(key, result);
+          }
         }
       } catch (err) {
         writeLog(`[lavish] wire transport feedback push error: ${err?.message || err}`);
@@ -2209,10 +2309,32 @@ export async function serve({
       );
     };
 
+    const onBrowserDisconnected = (changedKey) => {
+      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN) return;
+      const published = channel.publish({
+        payload: JSON.stringify({ status: "browser_disconnected" }),
+        flags: FLAGS.NONE,
+        sender: "server",
+      });
+      pushWireFrame(
+        encodeFrame({
+          type: OPCODES.PUSH,
+          seqId: published.seqId,
+          seq: published.seqId,
+          channel: "feedback",
+          flags: published.rawFlags,
+          payload: published.payload,
+        }),
+      );
+    };
+
     events.on("feedback", onFeedback);
     events.on("ended", onEnded);
+    events.on("browser-disconnected", onBrowserDisconnected);
 
-    webSocket.on("message", async (data) => {
+    let clientExpectingReply = initialHasReply;
+
+    messageHandler = async (data) => {
       const line = typeof data === "string" ? data : data.toString("utf8");
       let frame;
       try {
@@ -2223,6 +2345,9 @@ export async function serve({
       if (frame.type === OPCODES.OPEN) {
         const params = parseParams(frame.payload);
         const lastSeenSeq = parseInt(params.last_seen_seq, 10) || 0;
+        if (params.has_reply === "1") {
+          clientExpectingReply = true;
+        }
         const openResp = encodeFrame({
           type: OPCODES.OPEN,
           seqId: channel.lastSeq,
@@ -2251,6 +2376,10 @@ export async function serve({
             );
           }
         }
+
+        if (!clientExpectingReply) {
+          deliverPendingFeedback().catch(() => {});
+        }
       } else if (frame.type === OPCODES.ACK) {
         channel.acknowledge(frame.seqId);
       } else if (frame.type === OPCODES.MESSAGE || frame.type === OPCODES.PUSH) {
@@ -2274,20 +2403,35 @@ export async function serve({
             flags: FLAGS.NONE,
           }),
         );
+        clientExpectingReply = false;
+        deliverPendingFeedback().catch(() => {});
       } else if (frame.type === OPCODES.CLOSE || frame.type === OPCODES.END) {
         webSocket.close();
       }
-    });
+    };
+
+    while (pendingMessages.length > 0) {
+      const pendingData = pendingMessages.shift();
+      messageHandler(pendingData);
+    }
 
     webSocket.once("close", () => {
       if (heartbeat) clearInterval(heartbeat);
       events.off("feedback", onFeedback);
       events.off("ended", onEnded);
+      events.off("browser-disconnected", onBrowserDisconnected);
       channel.unsubscribe(webSocket);
       const currentSockets = activeWireSockets.get(key);
       if (currentSockets) {
         currentSockets.delete(webSocket);
         if (currentSockets.size === 0) activeWireSockets.delete(key);
+      }
+      if (holder && activePolls.get(key) === holder) {
+        releasePollListener(holder, activePolls, deliveredFeedback, events);
+        if (!activePolls.has(key)) {
+          clearBrowserDisconnectTimer(key);
+          browserDisconnectPending.delete(key);
+        }
       }
       events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback, activeWireSockets));
       refreshIdleTimer();
@@ -2325,15 +2469,21 @@ export async function serve({
       return;
     }
     let initialLastSeenSeq = 0;
+    let initialHasReply = false;
+    let initialTakeover = false;
     try {
       const parsedUrl = new URL(String(req.url || ""), "http://lavish.local");
       const param = parsedUrl.searchParams.get("last_seen_seq");
       if (param) initialLastSeenSeq = parseInt(param, 10) || 0;
+      if (parsedUrl.searchParams.get("has_reply") === "1") initialHasReply = true;
+      if (parsedUrl.searchParams.get("takeover") === "1") initialTakeover = true;
     } catch {
       // ignore
     }
     wireWebSocketServer.handleUpgrade(req, socket, head, (webSocket) => {
-      attachWireClient(webSocket, key, { initialLastSeenSeq });
+      attachWireClient(webSocket, key, { initialLastSeenSeq, initialHasReply, initialTakeover }).catch((error) => {
+        writeLog(`[lavish] attachWireClient failed: ${error?.message || error}`);
+      });
     });
   }
 

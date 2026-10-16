@@ -4690,9 +4690,7 @@ events.set("chat-sync", (data) => {
 });
 let wireSocketActive = false;
 events.set("agent-presence", (data) => {
-  if (typeof data?.wire === "boolean") {
-    wireSocketActive = data.wire;
-  }
+  wireSocketActive = Boolean(data?.wire);
   const effectiveState = wireSocketActive && data?.state === "waiting" ? "listening" : data?.state;
   setAgentPresence(data?.mode === "external-listener" ? "external" : effectiveState);
 });

@@ -65,6 +65,15 @@ import { generateSharePassword } from "./share-password.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 import { excalidrawLibrariesDir, loadExcalidrawLibraries } from "./whiteboard-library-store.js";
 import { WireClient } from "./wire-transport.js";
+export {
+  BENCHMARK_PROBE_TAG,
+  generateLoremIpsumProbe,
+  isBenchmarkProbe,
+  estimateTokens,
+  runSideBySideTurn,
+  recordBenchmarkMeasurement,
+  renderBenchmarkReport,
+} from "./benchmark.js";
 
 const SHARE_VALUE_FLAGS = ["--password", "--token", "--site", "--update-key"];
 const COMMANDS = new Set([
@@ -454,11 +463,16 @@ async function waitCommand(args) {
   const verboseInstructions = args.includes("--verbose-instructions");
   const includeDomSnapshot = args.includes("--snapshot") || args.includes("--dom");
 
-  const wsUrl = baseUrl.replace(/^http/, "ws") + `/wire/${encodeURIComponent(key)}`;
+  const queryParams = new URLSearchParams();
+  if (ackSeq !== undefined) queryParams.set("last_seen_seq", String(ackSeq));
+  if (replyText) queryParams.set("has_reply", "1");
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
+  const wsUrl = baseUrl.replace(/^http/, "ws") + `/wire/${encodeURIComponent(key)}${queryString}`;
   const client = new WireClient({ url: wsUrl });
 
   try {
-    await client.connect(key, { timeoutMs: 3000 });
+    await client.connect(key, { timeoutMs: 3000, lastSeenSeq: ackSeq || 0, hasReply: Boolean(replyText) });
     const frame = await client.wait({
       channel: key,
       reply: replyText || undefined,
@@ -478,6 +492,20 @@ async function waitCommand(args) {
       payloadData = JSON.parse(frame.payload);
     } catch {
       payloadData = { status: "feedback", prompts: [{ prompt: frame.payload, tag: "message" }] };
+    }
+
+    if (payloadData.code === "NOT_FOUND" || (payloadData.status === "error" && payloadData.code === "NOT_FOUND")) {
+      throw new AxiError("session not found", "NOT_FOUND", [`Run \`lavish-axi open ${file}\` to start a session`]);
+    }
+    if (payloadData.code === "LISTENER_ACTIVE") {
+      throw new AxiError(payloadData.error || "Lavish Editor poll listener is active", "LISTENER_ACTIVE", [
+        `Pass --takeover to replace the current listener`,
+      ]);
+    }
+    if (payloadData.code === "LISTENER_REPLACED") {
+      throw new AxiError("Lavish Editor poll listener was replaced by a takeover", "LISTENER_REPLACED", [
+        `Re-run lavish-axi wait ${file} only if you intend to take over listening`,
+      ]);
     }
 
     if (payloadData.status === "ended") {
@@ -500,14 +528,19 @@ async function waitCommand(args) {
       seq: frame.seqId,
       includeDomSnapshot,
     });
-  } catch {
-    // If WebSocket is refused or fails, fall back to posting reply (if any) then long-poll
+  } catch (err) {
+    if (err instanceof AxiError) throw err;
+    if (err?.code === "NOT_FOUND" || err?.payload?.code === "NOT_FOUND") {
+      throw new AxiError("session not found", "NOT_FOUND", [`Run \`lavish-axi open ${file}\` to start a session`]);
+    }
+    if (err?.code === "LISTENER_ACTIVE" || err?.payload?.code === "LISTENER_ACTIVE") {
+      throw new AxiError(err.message || "Lavish Editor poll listener is active", "LISTENER_ACTIVE", [
+        `Pass --takeover to replace the current listener`,
+      ]);
+    }
+    // If WebSocket is refused or fails, post reply (if any) then fall back to long-poll
     if (replyText) {
-      try {
-        await postAgentReply(`${baseUrl}/api/${key}/agent-reply`, replyText, absolute);
-      } catch {
-        // ignore
-      }
+      await postAgentReply(`${baseUrl}/api/${key}/agent-reply`, replyText, absolute);
     }
     const query = new URLSearchParams({ file: absolute });
     if (timeoutMs) query.set("timeoutMs", String(timeoutMs));
@@ -544,6 +577,8 @@ async function pollCommand(args) {
   const absolute = await canonicalFile(file);
   const baseUrl = await ensureServer();
   const timeoutMs = flagValue(args, "--timeout-ms");
+  const ackFlag = flagValue(args, "--ack");
+  const ackSeq = ackFlag ? parseInt(ackFlag, 10) : undefined;
 
   const onPollSignal = (signal) => {
     process.stderr.write(`\n${pollInterruptedText(absolute)}\n`);
@@ -565,15 +600,24 @@ async function pollCommand(args) {
 
   try {
     if (!owner && !takeover) {
-      const wsUrl = baseUrl.replace(/^http/, "ws") + `/wire/${encodeURIComponent(sessionKey(absolute))}`;
+      const queryParams = new URLSearchParams();
+      if (ackSeq !== undefined) queryParams.set("last_seen_seq", String(ackSeq));
+      if (agentReply) queryParams.set("has_reply", "1");
+      const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
+      const wsUrl = baseUrl.replace(/^http/, "ws") + `/wire/${encodeURIComponent(sessionKey(absolute))}${queryString}`;
       const client = new WireClient({ url: wsUrl });
       try {
-        await client.connect(sessionKey(absolute), { timeoutMs: 1500 });
+        await client.connect(sessionKey(absolute), {
+          timeoutMs: 1500,
+          lastSeenSeq: ackSeq || 0,
+          hasReply: Boolean(agentReply),
+        });
         notifyHerdrPollReady();
         const timeout = timeoutMs ? parseInt(timeoutMs, 10) : 0;
         const frame = await client.wait({
           channel: sessionKey(absolute),
           reply: agentReply || undefined,
+          ackSeq,
           timeoutMs: timeout,
         });
         let wsResult;
@@ -587,6 +631,19 @@ async function pollCommand(args) {
           }
         }
         await client.disconnect();
+        if (wsResult?.code === "NOT_FOUND" || (wsResult?.status === "error" && wsResult?.code === "NOT_FOUND")) {
+          throw new AxiError("session not found", "NOT_FOUND", [`Run \`lavish-axi open ${file}\` to start a session`]);
+        }
+        if (wsResult?.code === "LISTENER_REPLACED") {
+          throw new AxiError("Lavish Editor poll listener was replaced by a takeover", "LISTENER_REPLACED", [
+            `Re-run lavish-axi poll ${absolute} only if you intend to take over listening`,
+          ]);
+        }
+        if (wsResult?.code === "LISTENER_ACTIVE") {
+          throw new AxiError(wsResult.error || "Lavish Editor poll listener is active", "LISTENER_ACTIVE", [
+            `Pass --takeover to replace the current listener`,
+          ]);
+        }
         return createPollOutput({
           file: absolute,
           response: wsResult,
@@ -594,9 +651,18 @@ async function pollCommand(args) {
           verboseInstructions,
           seq: frame.seqId,
         });
-      } catch {
+      } catch (err) {
         // WebSocket refused or failed; smoothly fall back to legacy long poll
         await client.disconnect().catch(() => {});
+        if (err instanceof AxiError) throw err;
+        if (err?.code === "NOT_FOUND" || err?.payload?.code === "NOT_FOUND") {
+          throw new AxiError("session not found", "NOT_FOUND", [`Run \`lavish-axi open ${file}\` to start a session`]);
+        }
+        if (err?.code === "LISTENER_ACTIVE" || err?.payload?.code === "LISTENER_ACTIVE") {
+          throw new AxiError(err.message || "Lavish Editor poll listener is active", "LISTENER_ACTIVE", [
+            `Pass --takeover to replace the current listener`,
+          ]);
+        }
       }
     }
 

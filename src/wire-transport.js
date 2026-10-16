@@ -321,11 +321,13 @@ export class WireChannel {
 
   /**
    * Replay messages from sliding buffer since a given sequence ID.
+   * Excludes messages already acknowledged.
    * @param {number} sinceSeq
    * @returns {Array<object>}
    */
   replaySince(sinceSeq = 0) {
-    return this.buffer.filter((m) => m.seqId > sinceSeq);
+    const minSeq = Math.max(sinceSeq, this.lastAcked);
+    return this.buffer.filter((m) => m.seqId > minSeq);
   }
 
   /**
@@ -414,10 +416,13 @@ export class WireClient extends EventEmitter {
    * @param {object} [opts]
    * @param {number} [opts.lastSeenSeq=0]
    * @param {number} [opts.timeoutMs=5000]
+   * @param {boolean} [opts.hasReply=false]
    * @returns {Promise<boolean>}
    */
-  async connect(channel = this.sessionKey || "default", { lastSeenSeq = 0, timeoutMs = 5000 } = {}) {
+  async connect(channel = this.sessionKey || "default", { lastSeenSeq = 0, timeoutMs = 5000, hasReply = false } = {}) {
     this.currentChannel = channel;
+    this.lastSeenSeq = lastSeenSeq;
+    this.lastSeq = Math.max(this.lastSeq, lastSeenSeq);
     const WebSocketCtor = this.options.WebSocket || globalThis.WebSocket;
     if (!WebSocketCtor) {
       throw new Error("WebSocket constructor is not available in this environment");
@@ -427,25 +432,72 @@ export class WireClient extends EventEmitter {
       throw new Error("WireClient requires a target WebSocket url");
     }
 
-    await new Promise((resolve, reject) => {
+    let targetUrl = this.wsUrl;
+    try {
+      const parsed = new URL(this.wsUrl);
+      if (lastSeenSeq > 0) {
+        parsed.searchParams.set("last_seen_seq", String(lastSeenSeq));
+      }
+      if (hasReply) {
+        parsed.searchParams.set("has_reply", "1");
+      }
+      targetUrl = parsed.toString();
+    } catch {
+      // keep targetUrl as wsUrl
+    }
+
+    return new Promise((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
+          cleanup();
           try {
             this.ws?.close();
           } catch {
             // ignore
           }
-          reject(new Error(`WebSocket connection timed out to ${this.wsUrl}`));
+          reject(new Error("Wire handshake timed out"));
         }
       }, timeoutMs);
 
-      try {
-        this.ws = new WebSocketCtor(this.wsUrl);
-      } catch (err) {
+      const cleanup = () => {
         clearTimeout(timer);
+        this.removeListener("frame", onHandshake);
+      };
+
+      const onHandshake = (frame) => {
+        if (settled) return;
+        if (frame.type === OPCODES.OPEN) {
+          settled = true;
+          cleanup();
+          this.lastSeq = frame.seqId;
+          resolve(true);
+        } else if (frame.type === OPCODES.CLOSE || frame.type === OPCODES.END) {
+          settled = true;
+          cleanup();
+          let errPayload = null;
+          try {
+            errPayload = JSON.parse(frame.payload);
+          } catch {
+            // ignore
+          }
+          const errCode = errPayload?.code || "HANDSHAKE_FAILED";
+          const errMsg = errPayload?.error || `Wire handshake closed with ${frame.type}`;
+          const err = new Error(errMsg);
+          /** @type {any} */ (err).code = errCode;
+          /** @type {any} */ (err).payload = errPayload;
+          reject(err);
+        }
+      };
+
+      this.on("frame", onHandshake);
+
+      try {
+        this.ws = new WebSocketCtor(targetUrl);
+      } catch (err) {
         settled = true;
+        cleanup();
         reject(err);
         return;
       }
@@ -453,9 +505,26 @@ export class WireClient extends EventEmitter {
       this.ws.onopen = () => {
         if (settled) return;
         this.isConnected = true;
-        clearTimeout(timer);
-        settled = true;
-        resolve(undefined);
+        const openFrame = encodeFrame({
+          type: OPCODES.OPEN,
+          seqId: lastSeenSeq,
+          channel,
+          flags: FLAGS.NONE,
+          payload: formatParams({
+            session: channel,
+            role: this.role,
+            client: this.name,
+            last_seen_seq: lastSeenSeq,
+            ...(hasReply ? { has_reply: "1" } : {}),
+          }),
+        });
+        try {
+          this._rawSend(openFrame);
+        } catch (err) {
+          settled = true;
+          cleanup();
+          reject(err);
+        }
       };
 
       this.ws.onmessage = (event) => {
@@ -465,8 +534,8 @@ export class WireClient extends EventEmitter {
 
       this.ws.onerror = (err) => {
         if (!settled) {
-          clearTimeout(timer);
           settled = true;
+          cleanup();
           reject(err instanceof Error ? err : new Error("WebSocket error during connection"));
         } else {
           this.emit("error", err);
@@ -478,47 +547,6 @@ export class WireClient extends EventEmitter {
         this.emit("close");
       };
     });
-
-    // Handshake over WebSocket
-    await new Promise((resolve, reject) => {
-      const handshakeTimer = setTimeout(() => {
-        this.removeListener("frame", onHandshake);
-        reject(new Error("Wire handshake timed out"));
-      }, timeoutMs);
-
-      const onHandshake = (frame) => {
-        if (frame.type === OPCODES.OPEN) {
-          clearTimeout(handshakeTimer);
-          this.removeListener("frame", onHandshake);
-          const params = parseParams(frame.payload);
-          this.lastSeq = frame.seqId;
-          resolve({
-            session: frame.channel,
-            lastSeq: frame.seqId,
-            params,
-          });
-        }
-      };
-
-      this.on("frame", onHandshake);
-
-      const openFrame = encodeFrame({
-        type: OPCODES.OPEN,
-        seqId: lastSeenSeq,
-        channel,
-        flags: FLAGS.NONE,
-        payload: formatParams({
-          session: channel,
-          role: this.role,
-          client: this.name,
-          last_seen_seq: lastSeenSeq,
-        }),
-      });
-
-      this._rawSend(openFrame);
-    });
-
-    return true;
   }
 
   _rawSend(line) {
@@ -546,6 +574,9 @@ export class WireClient extends EventEmitter {
         this.pendingAcks.delete(frame.seqId);
       }
     } else if (frame.type === OPCODES.MESSAGE || frame.type === OPCODES.PUSH) {
+      if (this.lastSeenSeq && frame.seqId <= this.lastSeenSeq) {
+        return;
+      }
       this.lastSeq = Math.max(this.lastSeq, frame.seqId);
       let handled = false;
       if (this.waitResolver) {
@@ -573,31 +604,64 @@ export class WireClient extends EventEmitter {
    * @param {string} [param0.channel]
    * @param {string} param0.payload
    * @param {string} [param0.flags='R']
+   * @param {number} [param0.timeoutMs=5000]
    * @returns {Promise<{ seqId: number, seq: number }>}
    */
-  send({ channel, payload, flags = "R" }) {
+  send({ channel, payload, flags = "R", timeoutMs = 5000 }) {
     const ch = channel || this.currentChannel;
     return new Promise((resolve, reject) => {
-      const frameStr = encodeFrame({
-        type: OPCODES.MESSAGE,
-        seqId: 0,
-        channel: ch,
-        flags,
-        payload,
-      });
+      let timer = null;
+      let settled = false;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        this.removeListener("frame", ackListener);
+        this.removeListener("close", onClose);
+        this.removeListener("error", onError);
+      };
 
       const ackListener = (frame) => {
         if (frame.type === OPCODES.ACK && (frame.channel === ch || frame.channel === "agent-reply")) {
-          this.removeListener("frame", ackListener);
+          cleanup();
           resolve({ seqId: frame.seqId, seq: frame.seqId });
         }
       };
 
+      const onClose = () => {
+        cleanup();
+        reject(new Error("Wire connection closed before ACK received"));
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Wire send timed out after ${timeoutMs}ms waiting for ACK`));
+        }, timeoutMs);
+        timer.unref?.();
+      }
+
       this.on("frame", ackListener);
+      this.once("close", onClose);
+      this.once("error", onError);
+
       try {
+        const frameStr = encodeFrame({
+          type: OPCODES.MESSAGE,
+          seqId: 0,
+          channel: ch,
+          flags,
+          payload,
+        });
         this._rawSend(frameStr);
       } catch (err) {
-        this.removeListener("frame", ackListener);
+        cleanup();
         reject(err);
       }
     });
@@ -646,6 +710,7 @@ export class WireClient extends EventEmitter {
         channel: ch,
         payload: reply,
         flags: FLAGS.REQUIRES_ACK,
+        timeoutMs: Math.max(5000, timeoutMs || 0),
       });
     }
 
@@ -660,7 +725,7 @@ export class WireClient extends EventEmitter {
       return frame;
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let timer = null;
 
       const cleanup = () => {
@@ -671,14 +736,7 @@ export class WireClient extends EventEmitter {
 
       const onClose = () => {
         cleanup();
-        resolve({
-          type: OPCODES.CLOSE,
-          seqId: this.lastSeq,
-          channel: ch,
-          flags: new Set([FLAGS.END_SESSION]),
-          rawFlags: FLAGS.END_SESSION,
-          payload: JSON.stringify({ status: "ended", ended_by: "server" }),
-        });
+        reject(new Error("Wire connection closed unexpectedly"));
       };
 
       this.waitResolver = (frame) => {
@@ -746,12 +804,32 @@ export class WireClient extends EventEmitter {
   async disconnect() {
     this.isConnected = false;
     if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {
-        // ignore
-      }
+      const socket = this.ws;
       this.ws = null;
+      if (socket.readyState === 1 /* OPEN */ || socket.readyState === 0 /* CONNECTING */) {
+        await new Promise((resolve) => {
+          if (typeof socket.once === "function") {
+            socket.once("close", resolve);
+          } else if (typeof socket.addEventListener === "function") {
+            socket.addEventListener("close", () => resolve(undefined), { once: true });
+          } else {
+            const prev = socket.onclose;
+            socket.onclose = (event) => {
+              try {
+                prev?.(event);
+              } catch {
+                // ignore
+              }
+              resolve(undefined);
+            };
+          }
+          try {
+            socket.close();
+          } catch {
+            resolve(undefined);
+          }
+        });
+      }
     }
   }
 }

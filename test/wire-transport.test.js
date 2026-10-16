@@ -527,3 +527,276 @@ test("CLI poll uses wire transport when WebSocket is available", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("wire transport respects ACK and excludes already handled feedback on replay", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-wire-ack-test-"));
+  const stateDir = path.join(dir, "state");
+  await mkdir(stateDir);
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body>ok</body></html>", "utf8");
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const opened = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact, noGate: true }),
+    }).then((res) => res.json());
+
+    const client = new WireClient({
+      serverUrl: base,
+      sessionKey: opened.key,
+      timeoutMs: 3000,
+    });
+
+    await client.connect();
+
+    // Queue first prompt
+    await fetch(`${base}/api/${opened.key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ prompts: [{ prompt: "Prompt 1", tag: "message" }] }),
+    });
+
+    const f1 = await client.waitForFeedback();
+    assert.equal(f1.prompts[0].prompt, "Prompt 1");
+    assert.equal(f1.seq, 1);
+
+    // Disconnect and reconnect with lastSeenSeq=1
+    await client.disconnect();
+    await new Promise((r) => setTimeout(r, 100));
+
+    const client2 = new WireClient({
+      serverUrl: base,
+      sessionKey: opened.key,
+      timeoutMs: 3000,
+    });
+
+    await client2.connect(opened.key, { lastSeenSeq: 1 });
+
+    // Queue second prompt
+    await fetch(`${base}/api/${opened.key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ prompts: [{ prompt: "Prompt 2", tag: "message" }] }),
+    });
+
+    const f2 = await client2.waitForFeedback();
+    assert.equal(f2.prompts[0].prompt, "Prompt 2");
+    assert.equal(f2.seq, 2);
+
+    await client2.disconnect();
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("missing session over wire transport returns NOT_FOUND immediately", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-wire-missing-test-"));
+  const stateDir = path.join(dir, "state");
+  await mkdir(stateDir);
+  const artifact = path.join(dir, "non-opened.html");
+  await writeFile(artifact, "<!doctype html><html><body>ok</body></html>", "utf8");
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+
+  const env = {
+    ...process.env,
+    LAVISH_AXI_STATE_DIR: stateDir,
+    LAVISH_AXI_PORT: String(server.port),
+    LAVISH_AXI_HOST: "127.0.0.1",
+    LAVISH_AXI_LINK_HOST: "127.0.0.1",
+    LAVISH_AXI_TELEMETRY: "0",
+    LAVISH_AXI_NO_OPEN: "1",
+  };
+
+  try {
+    const result = await runCli(["wait", artifact, "--timeout-ms", "2000"], { env });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout || result.stderr, /session not found/i);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("wire listener enforces exclusivity and handles takeover properly", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-wire-exclusive-test-"));
+  const stateDir = path.join(dir, "state");
+  await mkdir(stateDir);
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body>ok</body></html>", "utf8");
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const opened = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact, noGate: true }),
+    }).then((res) => res.json());
+
+    const client1 = new WireClient({
+      serverUrl: base,
+      sessionKey: opened.key,
+      timeoutMs: 3000,
+    });
+    await client1.connect();
+
+    // Second client connects without takeover -> should fail with LISTENER_ACTIVE
+    const client2 = new WireClient({
+      serverUrl: base,
+      sessionKey: opened.key,
+      timeoutMs: 3000,
+    });
+    await assert.rejects(
+      async () => {
+        await client2.connect();
+      },
+      (err) => /** @type {any} */ (err)?.code === "LISTENER_ACTIVE" || String(err).includes("active"),
+    );
+
+    await client1.disconnect();
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("wire wait rejects on connection loss without declaring session ended", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-wire-drop-test-"));
+  const stateDir = path.join(dir, "state");
+  await mkdir(stateDir);
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body>ok</body></html>", "utf8");
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const opened = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact, noGate: true }),
+    }).then((res) => res.json());
+
+    const client = new WireClient({
+      serverUrl: base,
+      sessionKey: opened.key,
+      timeoutMs: 3000,
+    });
+    await client.connect();
+
+    await assert.rejects(async () => {
+      const waitPromise = client.wait({ timeoutMs: 5000 });
+      await new Promise((r) => setTimeout(r, 50));
+      if (typeof client.ws.terminate === "function") {
+        client.ws.terminate();
+      } else {
+        client.ws.close();
+      }
+      await waitPromise;
+    }, /Wire connection closed unexpectedly/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("wire wait with reply publishes reply before taking next prompt batch", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-wire-order-test-"));
+  const stateDir = path.join(dir, "state");
+  await mkdir(stateDir);
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body>ok</body></html>", "utf8");
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+
+  const env = {
+    ...process.env,
+    LAVISH_AXI_STATE_DIR: stateDir,
+    LAVISH_AXI_PORT: String(server.port),
+    LAVISH_AXI_HOST: "127.0.0.1",
+    LAVISH_AXI_LINK_HOST: "127.0.0.1",
+    LAVISH_AXI_TELEMETRY: "0",
+    LAVISH_AXI_NO_OPEN: "1",
+  };
+
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const opened = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact, noGate: true }),
+    }).then((res) => res.json());
+
+    // 1. Queue a prompt and receive it
+    await fetch(`${base}/api/${opened.key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ prompts: [{ prompt: "Initial prompt", tag: "message" }] }),
+    });
+
+    const res1 = await runCli(["wait", artifact, "--timeout-ms", "3000"], { env });
+    assert.match(res1.stdout, /Initial prompt/);
+
+    // 2. User queues a second prompt while agent is working
+    await fetch(`${base}/api/${opened.key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ prompts: [{ prompt: "Second prompt while working", tag: "message" }] }),
+    });
+
+    // 3. Agent calls wait with --reply "Done turn 1"
+    const res2 = await runCli(["wait", artifact, "--reply", "Done turn 1", "--ack", "1", "--timeout-ms", "3000"], {
+      env,
+    });
+    assert.match(res2.stdout, /Second prompt while working/);
+
+    // Check state.json receipts:
+    // Initial prompt should have done_at set (Done)
+    // Second prompt should have delivered_at set (Seen) but NOT done_at!
+    const storedState = JSON.parse(await readFile(path.join(stateDir, "state.json"), "utf8"));
+    const chat = storedState.sessions[opened.key].chat;
+    const initialPrompt = chat.find((c) => c.text === "Initial prompt");
+    const secondPrompt = chat.find((c) => c.text === "Second prompt while working");
+
+    assert.ok(initialPrompt.delivered_at, "initial prompt should be delivered (Seen)");
+    assert.ok(initialPrompt.done_at, "initial prompt should be answered (Done)");
+
+    assert.ok(secondPrompt.delivered_at, "second prompt should be delivered (Seen)");
+    assert.equal(secondPrompt.done_at, undefined, "second prompt must NOT be marked Done by the prior reply");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
