@@ -1617,6 +1617,7 @@ if (panelResizer) {
   panelResizer.addEventListener("pointerdown", (event) => {
     if (isMobileSheet() || event.button) return;
     event.preventDefault();
+    panelResizer.focus();
     panelDrag = {
       pointerId: event.pointerId,
       startX: Number(event.clientX),
@@ -1696,17 +1697,6 @@ function syncPanelWidthOnResize() {
 }
 
 window.addEventListener("resize", syncPanelWidthOnResize);
-if (sheetMedia && typeof sheetMedia.addEventListener === "function") {
-  sheetMedia.addEventListener("change", (event) => {
-    if (!event.matches) {
-      if (isPanelCollapsed) {
-        setPanelCollapsed(true);
-      } else {
-        applyPanelWidth(preferredPanelWidth, { persist: false });
-      }
-    }
-  });
-}
 
 applyPanelWidth(preferredPanelWidth, { persist: false });
 
