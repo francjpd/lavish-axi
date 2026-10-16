@@ -697,12 +697,6 @@ async function createChromeHarness({
       const handlers = windowListeners.get("resize") || [];
       for (const handler of handlers) handler({});
     },
-    dragPanelResizer(fromX, toX, { pointerId = 1 } = {}) {
-      const resizer = element("panelResizer");
-      resizer.dispatch("pointerdown", { pointerId, clientX: fromX, button: 0, preventDefault() {} });
-      resizer.dispatch("pointermove", { pointerId, clientX: toX });
-      resizer.dispatch("pointerup", { pointerId, clientX: toX });
-    },
   };
 }
 
