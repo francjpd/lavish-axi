@@ -65,6 +65,21 @@ import { generateSharePassword } from "./share-password.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 import { excalidrawLibrariesDir, loadExcalidrawLibraries } from "./whiteboard-library-store.js";
 import { WireClient } from "wire-axi";
+import {
+  BENCHMARK_PROBE_TAG,
+  generateLoremIpsumProbe,
+  isBenchmarkProbe,
+  estimateTokens,
+  runSideBySideTurn,
+  recordBenchmarkMeasurement,
+  renderBenchmarkReport,
+  getBenchmarkDataDir,
+  isBenchmarkEnabled,
+  isComparativeModeEnabled,
+  measureComparativeLegacyCycle,
+  recordTurnMetrics,
+  renderRealUsageReport,
+} from "./benchmark.js";
 export {
   BENCHMARK_PROBE_TAG,
   generateLoremIpsumProbe,
@@ -73,7 +88,13 @@ export {
   runSideBySideTurn,
   recordBenchmarkMeasurement,
   renderBenchmarkReport,
-} from "./benchmark.js";
+  getBenchmarkDataDir,
+  isBenchmarkEnabled,
+  isComparativeModeEnabled,
+  measureComparativeLegacyCycle,
+  recordTurnMetrics,
+  renderRealUsageReport,
+};
 
 const SHARE_VALUE_FLAGS = ["--password", "--token", "--site", "--update-key"];
 const COMMANDS = new Set([
@@ -114,7 +135,7 @@ const POLL_AGENT_REPLY_HELP_POINTER =
   "The Conversation panel's Markdown subset is in README's Feedback controls bullet.";
 const POLL_AGENT_REPLY_NEXT_POINTER =
   "The Conversation panel's Markdown subset is in `lavish-axi poll --help` and README.";
-const POLL_VALUE_FLAGS = ["--agent-reply", "--agent-reply-file", "--timeout-ms", "--owner"];
+const POLL_VALUE_FLAGS = ["--agent-reply", "--agent-reply-file", "--timeout-ms", "--owner", "--ack", "--benchmark-dir"];
 const AGENT_REPLY_JSON_LIMIT_BYTES = 2 * 1024 * 1024;
 const AGENT_REPLY_JSON_ENVELOPE_BYTES = Buffer.byteLength(JSON.stringify({ agent_reply: "" }));
 const AGENT_REPLY_INPUT_LIMIT_BYTES = AGENT_REPLY_JSON_LIMIT_BYTES - AGENT_REPLY_JSON_ENVELOPE_BYTES;
@@ -435,7 +456,7 @@ export function shouldOpenBrowser(args, env) {
   return !args.includes("--no-open") && env.LAVISH_AXI_NO_OPEN !== "1";
 }
 
-const WAIT_VALUE_FLAGS = ["--reply", "--agent-reply", "--agent-reply-file", "--timeout-ms", "--ack"];
+const WAIT_VALUE_FLAGS = ["--reply", "--agent-reply", "--agent-reply-file", "--timeout-ms", "--ack", "--benchmark-dir"];
 
 async function waitCommand(args) {
   const file = firstPositionalArg(args, WAIT_VALUE_FLAGS);
@@ -446,6 +467,11 @@ async function waitCommand(args) {
   const absolute = await canonicalFile(file);
   const key = sessionKey(absolute);
   const baseUrl = await ensureServer();
+
+  const turnStartTime = performance.now();
+  const benchmarkEnabled = isBenchmarkEnabled(args, process.env);
+  const comparative = isComparativeModeEnabled(args, process.env);
+  const benchmarkDir = flagValue(args, "--benchmark-dir") || getBenchmarkDataDir();
 
   let replyText = flagValue(args, "--reply");
   if (!replyText) {
@@ -472,19 +498,43 @@ async function waitCommand(args) {
   const client = new WireClient({ url: wsUrl });
 
   try {
+    const connectStart = performance.now();
     await client.connect(key, { timeoutMs: 3000, lastSeenSeq: ackSeq || 0, hasReply: Boolean(replyText) });
+    const connectMs = performance.now() - connectStart;
+
+    const waitStart = performance.now();
     const frame = await client.wait({
       channel: key,
       reply: replyText || undefined,
       ackSeq,
       timeoutMs,
     });
+    const waitMs = performance.now() - waitStart;
+    const rawTransportMs = connectMs + waitMs;
 
     if (frame.type === "TIMEOUT") {
-      return {
+      const output = {
         session: { file: absolute, status: "waiting" },
         next_step: `No user feedback arrived before timeout. Run \`lavish-axi wait ${file}\` to wait for feedback.`,
       };
+      if (benchmarkEnabled) {
+        await recordTurnMetrics({
+          file: absolute,
+          transport: "wire-axi",
+          rawTransportMs,
+          waitMs,
+          replyMs: replyText ? connectMs : 0,
+          totalTurnMs: performance.now() - turnStartTime,
+          output,
+          prompts: [],
+          replyText: replyText || "",
+          seq: ackSeq,
+          comparative: false,
+          baseUrl,
+          dataDir: benchmarkDir,
+        }).catch(() => {});
+      }
+      return output;
     }
 
     let payloadData;
@@ -509,7 +559,7 @@ async function waitCommand(args) {
     }
 
     if (payloadData.status === "ended") {
-      return {
+      const output = {
         session: {
           file: absolute,
           status: "ended",
@@ -518,9 +568,27 @@ async function waitCommand(args) {
         next_step: createEndedNextStep(absolute, payloadData.ended_by),
         seq: frame.seqId,
       };
+      if (benchmarkEnabled) {
+        await recordTurnMetrics({
+          file: absolute,
+          transport: "wire-axi",
+          rawTransportMs,
+          waitMs,
+          replyMs: replyText ? connectMs : 0,
+          totalTurnMs: performance.now() - turnStartTime,
+          output,
+          prompts: [],
+          replyText: replyText || "",
+          seq: frame.seqId,
+          comparative: false,
+          baseUrl,
+          dataDir: benchmarkDir,
+        }).catch(() => {});
+      }
+      return output;
     }
 
-    return createPollOutput({
+    const output = createPollOutput({
       file: absolute,
       response: payloadData,
       agent: detectInvokingAgent(process.env),
@@ -528,6 +596,26 @@ async function waitCommand(args) {
       seq: frame.seqId,
       includeDomSnapshot,
     });
+
+    if (benchmarkEnabled) {
+      await recordTurnMetrics({
+        file: absolute,
+        transport: "wire-axi",
+        rawTransportMs,
+        waitMs,
+        replyMs: replyText ? connectMs : 0,
+        totalTurnMs: performance.now() - turnStartTime,
+        output,
+        prompts: payloadData.prompts || [],
+        replyText: replyText || "",
+        seq: frame.seqId,
+        comparative,
+        baseUrl,
+        dataDir: benchmarkDir,
+      }).catch(() => {});
+    }
+
+    return output;
   } catch (err) {
     if (err instanceof AxiError) throw err;
     if (err?.code === "NOT_FOUND" || err?.payload?.code === "NOT_FOUND") {
@@ -539,19 +627,44 @@ async function waitCommand(args) {
       ]);
     }
     // If WebSocket is refused or fails, post reply (if any) then fall back to long-poll
+    let fallbackReplyMs = 0;
     if (replyText) {
+      const rStart = performance.now();
       await postAgentReply(`${baseUrl}/api/${key}/agent-reply`, replyText, absolute);
+      fallbackReplyMs = performance.now() - rStart;
     }
+    const pollStart = performance.now();
     const query = new URLSearchParams({ file: absolute });
     if (timeoutMs) query.set("timeoutMs", String(timeoutMs));
     const response = await fetchJson(`${baseUrl}/api/poll?${query}`, { retries: 0 });
-    return createPollOutput({
+    const pollMs = performance.now() - pollStart;
+    const output = createPollOutput({
       file: absolute,
       response,
       agent: detectInvokingAgent(process.env),
       verboseInstructions,
       includeDomSnapshot,
     });
+
+    if (benchmarkEnabled) {
+      await recordTurnMetrics({
+        file: absolute,
+        transport: "poll-fallback",
+        rawTransportMs: fallbackReplyMs + pollMs,
+        waitMs: pollMs,
+        replyMs: fallbackReplyMs,
+        totalTurnMs: performance.now() - turnStartTime,
+        output,
+        prompts: response.prompts || [],
+        replyText: replyText || "",
+        seq: response.seq,
+        comparative: false,
+        baseUrl,
+        dataDir: benchmarkDir,
+      }).catch(() => {});
+    }
+
+    return output;
   } finally {
     await client.disconnect();
   }
@@ -579,6 +692,11 @@ async function pollCommand(args) {
   const timeoutMs = flagValue(args, "--timeout-ms");
   const ackFlag = flagValue(args, "--ack");
   const ackSeq = ackFlag ? parseInt(ackFlag, 10) : undefined;
+
+  const turnStartTime = performance.now();
+  const benchmarkEnabled = isBenchmarkEnabled(args, process.env);
+  const comparative = isComparativeModeEnabled(args, process.env);
+  const benchmarkDir = flagValue(args, "--benchmark-dir") || getBenchmarkDataDir();
 
   const onPollSignal = (signal) => {
     process.stderr.write(`\n${pollInterruptedText(absolute)}\n`);
@@ -644,13 +762,31 @@ async function pollCommand(args) {
             `Pass --takeover to replace the current listener`,
           ]);
         }
-        return createPollOutput({
+        const output = createPollOutput({
           file: absolute,
           response: wsResult,
           agent: detectInvokingAgent(process.env),
           verboseInstructions,
           seq: frame.seqId,
         });
+
+        if (benchmarkEnabled) {
+          await recordTurnMetrics({
+            file: absolute,
+            transport: "wire-axi",
+            rawTransportMs: performance.now() - turnStartTime,
+            totalTurnMs: performance.now() - turnStartTime,
+            output,
+            prompts: wsResult.prompts || [],
+            replyText: agentReply || "",
+            seq: frame.seqId,
+            comparative,
+            baseUrl,
+            dataDir: benchmarkDir,
+          }).catch(() => {});
+        }
+
+        return output;
       } catch (err) {
         // WebSocket refused or failed; smoothly fall back to legacy long poll
         await client.disconnect().catch(() => {});
@@ -693,12 +829,30 @@ async function pollCommand(args) {
         `Re-run lavish-axi poll ${absolute} only if you intend to take over listening`,
       ]);
     }
-    return createPollOutput({
+    const output = createPollOutput({
       file: absolute,
       response,
       agent: detectInvokingAgent(process.env),
       verboseInstructions,
     });
+
+    if (benchmarkEnabled) {
+      await recordTurnMetrics({
+        file: absolute,
+        transport: "http-poll",
+        rawTransportMs: performance.now() - turnStartTime,
+        totalTurnMs: performance.now() - turnStartTime,
+        output,
+        prompts: response.prompts || [],
+        replyText: agentReply || "",
+        seq: response.seq,
+        comparative: false,
+        baseUrl,
+        dataDir: benchmarkDir,
+      }).catch(() => {});
+    }
+
+    return output;
   } finally {
     waitReporter?.stop();
     if (!timeoutMs) {
