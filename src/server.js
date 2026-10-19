@@ -2191,21 +2191,6 @@ export async function serve({
       });
     }
 
-    if (initialLastSeenSeq > 0 && initialLastSeenSeq < channel.lastSeq) {
-      const missed = channel.replaySince(initialLastSeenSeq);
-      for (const msg of missed) {
-        pushWireFrame(
-          encodeFrame({
-            type: OPCODES.MESSAGE,
-            seqId: msg.seqId,
-            channel: key,
-            flags: msg.rawFlags,
-            payload: msg.payload,
-          }),
-        );
-      }
-    }
-
     const deliverPendingFeedback = async () => {
       try {
         const pending = await store.takeFeedback(key);
@@ -2330,7 +2315,10 @@ export async function serve({
       }
       if (frame.type === OPCODES.OPEN) {
         const params = parseParams(frame.payload);
-        const lastSeenSeq = parseInt(params.last_seen_seq, 10) || 0;
+        const hasExplicitLastSeen = (params.last_seen_seq !== undefined && params.last_seen_seq !== "") || initialLastSeenSeq > 0;
+        const lastSeenSeq = hasExplicitLastSeen
+          ? (parseInt(params.last_seen_seq, 10) || initialLastSeenSeq || 0)
+          : channel.lastSeq;
         if (params.has_reply === "1") {
           clientExpectingReply = true;
         }
@@ -2347,7 +2335,7 @@ export async function serve({
         });
         pushWireFrame(openResp);
 
-        if (lastSeenSeq < channel.lastSeq) {
+        if (hasExplicitLastSeen && lastSeenSeq < channel.lastSeq) {
           const missed = channel.replaySince(lastSeenSeq);
           for (const msg of missed) {
             pushWireFrame(
