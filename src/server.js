@@ -2315,10 +2315,9 @@ export async function serve({
       }
       if (frame.type === OPCODES.OPEN) {
         const params = parseParams(frame.payload);
-        const hasExplicitLastSeen = (params.last_seen_seq !== undefined && params.last_seen_seq !== "") || initialLastSeenSeq > 0;
-        const lastSeenSeq = hasExplicitLastSeen
-          ? (parseInt(params.last_seen_seq, 10) || initialLastSeenSeq || 0)
-          : channel.lastSeq;
+        const explicitSeq = parseInt(params.last_seen_seq, 10) || initialLastSeenSeq || 0;
+        const hasExplicitLastSeen = explicitSeq > 0;
+        const lastSeenSeq = hasExplicitLastSeen ? explicitSeq : channel.lastSeq;
         if (params.has_reply === "1") {
           clientExpectingReply = true;
         }
