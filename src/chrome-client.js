@@ -1986,6 +1986,24 @@ function sendQueued(endAfter) {
     finishTerminalPreparation(terminal, preparations);
     return;
   }
+  const hasElementAnchor = queued.some((p) =>
+    Boolean(p.selector || p.uid || (p.tag && p.tag !== "message" && p.tag !== "layout-warnings")),
+  );
+  if (!hasElementAnchor) {
+    const acknowledgement = {};
+    pendingAcknowledgements.add(acknowledgement);
+    armSendAcknowledgementWarning();
+    submitQueued({
+      prompts: queued.slice(),
+      chatAtRequest: displayedChat.slice(),
+      domSnapshot: "",
+      endAfter: shouldEnd,
+      acknowledgement,
+      order: ++nextSendOperationOrder,
+    }).catch(() => {});
+    render();
+    return;
+  }
   requestSnapshot("submit", queued.slice(), false, null);
   render();
 }
