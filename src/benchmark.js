@@ -203,15 +203,15 @@ export function renderBenchmarkReport(records) {
   }
   output += `| **AVG** | - | - | - | **${avgLegacyTurn}** | - | **${avgLegacyTokens}** |\n\n`;
 
-  output += `### 2. Wire-AXI Atomic Single-Turn Wait\n`;
+  output += `### 2. Wire-AXI Single-Turn Poll\n`;
   output += `New workflow combines agent reply dispatch, explicit monotonic sequence ACK, and blocking next-event wait into a single atomic turn:\n`;
-  output += `\`lavish-axi wait <file> --reply "<msg>"\`\n\n`;
+  output += `\`lavish-axi poll <file> --agent-reply "<msg>"\`\n\n`;
 
   output += `| Round | Raw Transport (ms) | Model Turn (ms) | Total Turn Time (ms) | Output Bytes | Est. Tokens | Commands Used |\n`;
   output += `|-------|---------------------|-----------------|----------------------|--------------|-------------|---------------|\n`;
   for (let i = 0; i < latestRecords.length; i++) {
     const r = latestRecords[i];
-    output += `| ${i + 1} | ${(r.wire?.rawTransportMs || 0).toFixed(1)} | ${(r.wire?.modelTurnMs || 0).toFixed(1)} | ${(r.wire?.totalTurnMs || 0).toFixed(1)} | ${r.wire?.outputBytes || 0} | ${r.wire?.estTokens || 0} | 1 (\`wait --reply\`) |\n`;
+    output += `| ${i + 1} | ${(r.wire?.rawTransportMs || 0).toFixed(1)} | ${(r.wire?.modelTurnMs || 0).toFixed(1)} | ${(r.wire?.totalTurnMs || 0).toFixed(1)} | ${r.wire?.outputBytes || 0} | ${r.wire?.estTokens || 0} | 1 (\`poll --agent-reply\`) |\n`;
   }
   output += `| **AVG** | - | - | **${avgWireTurn}** | - | **${avgWireTokens}** | **1** |\n\n`;
 
@@ -285,7 +285,7 @@ export async function runSideBySideTurn({
   const wireTotalTurnMs = wireRawTransportMs + measuredModelTurnMs;
 
   // Estimate wire payload tokens
-  const terseNextStep = `Apply the requested changes to ${wireFile}. Run \`lavish-axi wait ${wireFile} --reply "<message>"\` to respond and continue.`;
+  const terseNextStep = `Apply the requested changes to ${wireFile}. Run \`lavish-axi poll ${wireFile} --agent-reply "<message>"\` to respond and continue.`;
   const wirePayloadString = JSON.stringify({
     session: { file: wireFile, status: "feedback" },
     prompts: feedbackFrame.prompts,
