@@ -325,8 +325,10 @@ export class SessionStore {
     }
     session.pending_prompts = session.prompts.length;
     const restoredSnapshot = String(payload.domSnapshot || payload.dom_snapshot || "");
-    if (!restoring || (existingPrompts.length === 0 && !session.dom_snapshot)) {
-      session.dom_snapshot = restoredSnapshot;
+    if (restoredSnapshot || !session.dom_snapshot) {
+      if (!restoring || (existingPrompts.length === 0 && !session.dom_snapshot)) {
+        session.dom_snapshot = restoredSnapshot;
+      }
     }
     session.status =
       shouldEndSession || alreadyEnded

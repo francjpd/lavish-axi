@@ -1933,6 +1933,12 @@ function createChatAttachmentsController() {
 
 const chatAttachmentController = createChatAttachmentsController();
 
+function hasElementAnchor(prompts) {
+  return prompts.some((p) =>
+    Boolean(p.selector || p.uid || (p.tag && p.tag !== "message" && p.tag !== "layout-warnings")),
+  );
+}
+
 function sendQueued(endAfter) {
   if (ended) return;
   if (terminalSubmission) {
@@ -1986,10 +1992,7 @@ function sendQueued(endAfter) {
     finishTerminalPreparation(terminal, preparations);
     return;
   }
-  const hasElementAnchor = queued.some((p) =>
-    Boolean(p.selector || p.uid || (p.tag && p.tag !== "message" && p.tag !== "layout-warnings")),
-  );
-  if (!hasElementAnchor) {
+  if (!hasElementAnchor(queued)) {
     const acknowledgement = {};
     pendingAcknowledgements.add(acknowledgement);
     armSendAcknowledgementWarning();
@@ -1997,7 +2000,7 @@ function sendQueued(endAfter) {
       prompts: queued.slice(),
       chatAtRequest: displayedChat.slice(),
       domSnapshot: "",
-      endAfter: shouldEnd,
+      endAfter: false,
       acknowledgement,
       order: ++nextSendOperationOrder,
     }).catch(() => {});
@@ -2046,6 +2049,22 @@ function completeTerminalPreparation(terminal, results) {
   // batch. A reload before this point must restore an ordinary editable queue, not
   // an incomplete terminal submission.
   persistTerminalReservation(true);
+  if (!hasElementAnchor(terminal.prompts)) {
+    const acknowledgement = {};
+    pendingAcknowledgements.add(acknowledgement);
+    armSendAcknowledgementWarning();
+    submitQueued({
+      prompts: terminal.prompts,
+      chatAtRequest: displayedChat.slice(),
+      domSnapshot: "",
+      endAfter: true,
+      acknowledgement,
+      order: terminal.order,
+      terminal,
+    }).catch(() => {});
+    render();
+    return;
+  }
   requestSnapshot("submit", terminal.prompts, true, terminal);
   render();
 }
@@ -2054,6 +2073,19 @@ function retryTerminalSubmission() {
   if (!terminalSubmission || terminalSubmission.inFlight || ended) return;
   terminalSubmission.inFlight = true;
   updateSendState();
+  if (!hasElementAnchor(terminalSubmission.prompts)) {
+    submitQueued({
+      prompts: terminalSubmission.prompts,
+      chatAtRequest: displayedChat.slice(),
+      domSnapshot: "",
+      endAfter: true,
+      acknowledgement: null,
+      order: terminalSubmission.order,
+      terminal: terminalSubmission,
+    }).catch(() => {});
+    render();
+    return;
+  }
   requestSnapshot("submit", terminalSubmission.prompts, true, terminalSubmission);
   render();
 }

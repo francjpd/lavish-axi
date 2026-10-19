@@ -1171,13 +1171,19 @@ test("a failed in-flight POST preserves and runs a completed later Send & End", 
     },
   });
 
-  chrome.element("chatInput").value = "First batch";
+  chrome.sendFrameMessage({
+    type: "lavish:queuePrompt",
+    prompt: { prompt: "First batch", selector: "h1", tag: "annotation", text: "First" },
+  });
   chrome.element("send").click();
   chrome.sendSnapshot("uid=1 first");
   await flushPromises();
   assert.equal(posts.length, 1);
 
-  chrome.element("chatInput").value = "Final batch";
+  chrome.sendFrameMessage({
+    type: "lavish:queuePrompt",
+    prompt: { prompt: "Final batch", selector: "h1", tag: "annotation", text: "Final" },
+  });
   chrome.element("sendAndEnd").click();
   const finalRequest = chrome.postedToFrame.at(-1);
   chrome.sendFrameMessage({
@@ -1325,8 +1331,10 @@ test("Send & End reserves its terminal batch and only retries that batch after f
       return { ok: true };
     },
   });
-  chrome.element("chatInput").value = "Terminal batch";
-
+  chrome.sendFrameMessage({
+    type: "lavish:queuePrompt",
+    prompt: { prompt: "Terminal batch", selector: "h1", tag: "annotation", text: "Terminal" },
+  });
   chrome.element("sendAndEnd").click();
   const firstRequest = chrome.postedToFrame.at(-1);
   assert.equal(chrome.element("send").disabled, true);
@@ -9150,4 +9158,29 @@ test("mixed batch with pure message and element annotation still captures DOM sn
   assert.equal(posts.length, 1);
   assert.equal(posts[0].body.domSnapshot, "uid=1 body\n  uid=2 h1");
   assert.equal(posts[0].body.prompts.length, 2);
+});
+
+test("pure chat Send & End skips DOM snapshot and submits empty domSnapshot with endAfter: true", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init = {}) => {
+      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
+      return { ok: true, json: async () => ({ status: "ended", chat: [] }) };
+    },
+  });
+
+  chrome.element("chatInput").value = "Looks great, all done!";
+  chrome.element("sendAndEnd").click();
+  await flushPromises();
+
+  assert.equal(
+    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
+    false,
+    "pure chat Send & End must not request a frame snapshot",
+  );
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.domSnapshot, "");
+  assert.equal(posts[0].body.endSession, true);
+  assert.equal(posts[0].body.prompts.length, 1);
+  assert.equal(posts[0].body.prompts[0].prompt, "Looks great, all done!");
 });
