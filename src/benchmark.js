@@ -179,9 +179,9 @@ export function renderBenchmarkReport(records) {
   output += `Host Machine: Linux (Node ${process.version}, PID ${process.pid})\n\n`;
 
   output += `## Executive Summary\n`;
-  output += `- **Turn Latency**: Reduced from **${avgLegacyTurn}ms** (3-call legacy cycle) to **${avgWireTurn}ms** (atomic single-call \`wait\`).\n`;
+  output += `- **Turn Latency**: Reduced from **${avgLegacyTurn}ms** (3-call legacy cycle) to **${avgWireTurn}ms** (atomic single-call \`poll --agent-reply\`).\n`;
   output += `  -> **${speedup}x faster** end-to-end turn execution.\n`;
-  output += `- **CLI Commands per Turn**: Reduced from **3 calls** (\`poll\` + \`reply\` + \`poll\` re-arm) to **1 call** (\`wait --reply\`).\n`;
+  output += `- **CLI Commands per Turn**: Reduced from **3 calls** (\`poll\` + \`reply\` + \`poll\` re-arm) to **1 call** (\`poll --agent-reply\`).\n`;
   output += `- **Response Payload Size**: Reduced to ~**${avgWireTokens} tokens** (from ~**${avgLegacyTokens} tokens**).\n`;
   output += `  -> **${tokenReduction}% token reduction** on agent turn output.\n`;
   output += `- **Presence Gap**: Continuous WebSocket connection maintains unbroken "listening" presence with 0ms gap between rounds.\n\n`;
@@ -732,12 +732,12 @@ export function renderRealUsageReport(records) {
   if (comparativeTurns.length > 0) {
     out += `- **Turn Latency**: Wire-AXI average **${avgWireLatency}ms** vs Legacy HTTP Poll **${avgComparativeLegacyLatency}ms** (${avgSpeedup}x speedup).\n`;
     out += `- **Token Consumption**: Wire-AXI average **${avgWireTokens} tokens** vs Legacy **${avgComparativeLegacyTokens} tokens** on agent wake.\n`;
-    out += `- **CLI Command Invocations**: Reduced from **3 calls** (\`poll\` + \`reply\` + \`poll\` re-arm) to **1 call** (\`wait --reply\`).\n`;
+    out += `- **CLI Command Invocations**: Reduced from **3 calls** (\`poll\` + \`reply\` + \`poll\` re-arm) to **1 call** (\`poll --agent-reply\`).\n`;
     out += `- **Continuous Presence**: Unbroken WebSocket connection eliminates the absence gap between rounds.\n\n`;
   } else {
     out += `- **Wire-AXI Average Latency**: **${avgWireLatency}ms** across ${wireTurns.length} turns.\n`;
     out += `- **Average Payload**: **${avgWireTokens} tokens** per turn.\n`;
-    out += `- **Command Overhead**: Single atomic \`wait\` turn.\n\n`;
+    out += `- **Command Overhead**: Single atomic \`poll --agent-reply\` turn.\n\n`;
   }
 
   out += `## Real Usage Turns Log\n\n`;

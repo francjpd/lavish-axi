@@ -128,7 +128,7 @@ test("renderBenchmarkReport generates clean Markdown summary", () => {
 
   const report = renderBenchmarkReport(sampleRecords);
   assert.ok(report.includes("Executive Summary"));
-  assert.ok(report.includes("Wire-AXI Atomic Single-Turn Wait"));
+  assert.ok(report.includes("Wire-AXI Single-Turn Poll"));
   assert.ok(report.includes("Legacy HTTP Long-Polling Turn"));
 });
 

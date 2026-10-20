@@ -11,8 +11,11 @@ if [ ! -f "$REPO_ROOT/dist/cli.mjs" ]; then
   node "$REPO_ROOT/scripts/build.js"
 fi
 
-# Ensure wire-axi WebSocket transport is active
-unset LAVISH_AXI_DISABLE_WIRE
+# Ensure wire-axi WebSocket transport is active.
+# LAVISH_AXI_LOCAL_WIRE=0 opts out so the HTTP-poll fallback can be exercised locally.
+if [ "${LAVISH_AXI_LOCAL_WIRE:-1}" != "0" ]; then
+  unset LAVISH_AXI_DISABLE_WIRE
+fi
 
 # Default to local task data directory if present
 TASK_DATA_DIR="/home/francjpd/Projects/firstmate/data/lavish-wire-axi-local"
