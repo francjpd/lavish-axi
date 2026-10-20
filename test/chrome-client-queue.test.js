@@ -1334,15 +1334,24 @@ test("Send & End falls back without a snapshot and preserves the atomic end inte
       return { ok: true };
     },
   });
-  chrome.element("chatInput").value = "Final answer";
+  chrome.sendFrameMessage({
+    type: "lavish:queuePrompt",
+    prompt: { prompt: "Final answer", selector: "h1", tag: "annotation", text: "Heading" },
+  });
 
   chrome.element("sendAndEnd").click();
+  assert.equal(
+    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
+    true,
+    "an element-anchored terminal batch asks the frame for a snapshot",
+  );
   chrome.runTimers(5000);
   await flushPromises();
   await flushPromises();
 
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, "/api/abc/prompts");
+  assert.equal(posts[0].body.prompts[0].prompt, "Final answer");
   assert.equal(posts[0].body.domSnapshot, "");
   assert.equal(posts[0].body.endSession, true);
   assert.equal(chrome.element("sendAndEnd").disabled, true);
@@ -1674,7 +1683,7 @@ test("an older successful send preserves newer terminal retry guidance", async (
       if (promptPostCount === 1) {
         chrome.element("chatInput").value = "Terminal batch";
         chrome.element("sendAndEnd").click();
-        chrome.sendSnapshot("terminal snapshot");
+        chrome.assertNoSnapshotRequested();
         return firstPost;
       }
       throw new Error("terminal network unavailable");
@@ -1693,6 +1702,11 @@ test("an older successful send preserves newer terminal retry guidance", async (
   await flushPromises();
   await flushPromises();
 
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Terminal batch"],
+    "the older send succeeded, so only the failed terminal batch is still queued",
+  );
   assert.equal(chrome.element("sendHint").hidden, false);
   assert.equal(chrome.element("sendHint").classList.contains("persistent"), true);
   assert.match(chrome.element("sendHint").textContent, /click Send & End to retry the same batch/i);
@@ -1742,7 +1756,7 @@ test("an older late Send failure preserves newer terminal retry guidance", async
   assert.doesNotMatch(chrome.element("sendHint").textContent, /click Send to Agent to retry/i);
 });
 
-test("a failed timeout fallback keeps the queue and a timely retry sends it once", async () => {
+test("a failed pure-chat send keeps the queue and a retry sends it once", async () => {
   let promptPostAttempts = 0;
   const chrome = await createChromeHarness({
     storedQueue: [{ uid: "", prompt: "Retry me", selector: "", tag: "message", text: "Freeform message" }],
@@ -1753,7 +1767,7 @@ test("a failed timeout fallback keeps the queue and a timely retry sends it once
   });
 
   chrome.element("send").click();
-  chrome.runTimers(5000);
+  chrome.assertNoSnapshotRequested();
   await flushPromises();
   await flushPromises();
 
@@ -1769,10 +1783,8 @@ test("a failed timeout fallback keeps the queue and a timely retry sends it once
   chrome.assertNoSnapshotRequested();
   await flushPromises();
   await flushPromises();
-  chrome.runTimers(5000);
-  await flushPromises();
 
-  assert.equal(promptPostAttempts, 2, "the timely snapshot cancels its fallback timer");
+  assert.equal(promptPostAttempts, 2, "the retry posts the queued batch again");
   assert.equal(chrome.queued().length, 0);
 });
 

@@ -1937,6 +1937,22 @@ function hasElementAnchor(prompts) {
   return prompts.some((p) => Boolean(p.selector || p.uid || (p.tag && p.tag !== "message")));
 }
 
+function submitWithoutSnapshot({ prompts, endAfter, order, terminal = null }) {
+  const acknowledgement = {};
+  pendingAcknowledgements.add(acknowledgement);
+  armSendAcknowledgementWarning();
+  submitQueued({
+    prompts,
+    chatAtRequest: displayedChat.slice(),
+    domSnapshot: "",
+    endAfter,
+    acknowledgement,
+    order,
+    terminal,
+  }).catch(() => {});
+  render();
+}
+
 function sendQueued(endAfter) {
   if (ended) return;
   if (terminalSubmission) {
@@ -1991,18 +2007,11 @@ function sendQueued(endAfter) {
     return;
   }
   if (!hasElementAnchor(queued)) {
-    const acknowledgement = {};
-    pendingAcknowledgements.add(acknowledgement);
-    armSendAcknowledgementWarning();
-    submitQueued({
+    submitWithoutSnapshot({
       prompts: queued.slice(),
-      chatAtRequest: displayedChat.slice(),
-      domSnapshot: "",
       endAfter: false,
-      acknowledgement,
       order: ++nextSendOperationOrder,
-    }).catch(() => {});
-    render();
+    });
     return;
   }
   requestSnapshot("submit", queued.slice(), false, null);
@@ -2048,19 +2057,12 @@ function completeTerminalPreparation(terminal, results) {
   // an incomplete terminal submission.
   persistTerminalReservation(true);
   if (!hasElementAnchor(terminal.prompts)) {
-    const acknowledgement = {};
-    pendingAcknowledgements.add(acknowledgement);
-    armSendAcknowledgementWarning();
-    submitQueued({
+    submitWithoutSnapshot({
       prompts: terminal.prompts,
-      chatAtRequest: displayedChat.slice(),
-      domSnapshot: "",
       endAfter: true,
-      acknowledgement,
       order: terminal.order,
       terminal,
-    }).catch(() => {});
-    render();
+    });
     return;
   }
   requestSnapshot("submit", terminal.prompts, true, terminal);
@@ -2072,19 +2074,12 @@ function retryTerminalSubmission() {
   terminalSubmission.inFlight = true;
   updateSendState();
   if (!hasElementAnchor(terminalSubmission.prompts)) {
-    const acknowledgement = {};
-    pendingAcknowledgements.add(acknowledgement);
-    armSendAcknowledgementWarning();
-    submitQueued({
+    submitWithoutSnapshot({
       prompts: terminalSubmission.prompts,
-      chatAtRequest: displayedChat.slice(),
-      domSnapshot: "",
       endAfter: true,
-      acknowledgement,
       order: terminalSubmission.order,
       terminal: terminalSubmission,
-    }).catch(() => {});
-    render();
+    });
     return;
   }
   requestSnapshot("submit", terminalSubmission.prompts, true, terminalSubmission);
