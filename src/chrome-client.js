@@ -1934,9 +1934,7 @@ function createChatAttachmentsController() {
 const chatAttachmentController = createChatAttachmentsController();
 
 function hasElementAnchor(prompts) {
-  return prompts.some((p) =>
-    Boolean(p.selector || p.uid || (p.tag && p.tag !== "message" && p.tag !== "layout-warnings")),
-  );
+  return prompts.some((p) => Boolean(p.selector || p.uid || (p.tag && p.tag !== "message")));
 }
 
 function sendQueued(endAfter) {
@@ -2074,12 +2072,15 @@ function retryTerminalSubmission() {
   terminalSubmission.inFlight = true;
   updateSendState();
   if (!hasElementAnchor(terminalSubmission.prompts)) {
+    const acknowledgement = {};
+    pendingAcknowledgements.add(acknowledgement);
+    armSendAcknowledgementWarning();
     submitQueued({
       prompts: terminalSubmission.prompts,
       chatAtRequest: displayedChat.slice(),
       domSnapshot: "",
       endAfter: true,
-      acknowledgement: null,
+      acknowledgement,
       order: terminalSubmission.order,
       terminal: terminalSubmission,
     }).catch(() => {});
