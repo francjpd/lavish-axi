@@ -984,7 +984,8 @@ export async function serve({
         }
         finishFeedbackDelivery(key, immediate);
         releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
-        if (immediate.session_ended) clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
+        if (immediate.session_ended)
+          clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
         detachRequestClose();
         res.json(agentFacingFeedback(immediate));
         return;
@@ -1183,7 +1184,8 @@ export async function serve({
         return;
       }
       const freshFeedback = session.fresh_feedback === true;
-      if (shouldEndSession) clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events, activeWireSockets);
+      if (shouldEndSession)
+        clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events, activeWireSockets);
       let publishedSession = session;
       if (hasLayoutWarningPrompt) {
         await syncOutstandingRepairs(req.params.key);

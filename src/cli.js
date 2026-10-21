@@ -725,12 +725,7 @@ export function startPollWaitReporter({
  *   dom_snapshot?: string,
  * }}
  */
-export function createPollOutput({
-  file,
-  response,
-  agent = "generic",
-  seq = undefined,
-}) {
+export function createPollOutput({ file, response, agent = "generic", seq = undefined }) {
   if (response.status === "missing") {
     throw new AxiError("No active Lavish Editor session for this file", "NOT_FOUND", [
       `Run \`lavish-axi ${file}\` first`,

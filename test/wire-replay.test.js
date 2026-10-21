@@ -296,7 +296,9 @@ test("wire takeover replaces existing listener and delivers feedback to successo
 
 test("wire disconnect with unacked feedback resets presence from working to waiting", async () => {
   const fixture = await setupServer();
-  const eventWs = new WebSocket(`${fixture.base.replace(/^http/, "ws")}/events/${fixture.key}`, { origin: fixture.base });
+  const eventWs = new WebSocket(`${fixture.base.replace(/^http/, "ws")}/events/${fixture.key}`, {
+    origin: fixture.base,
+  });
   await once(eventWs, "open");
   const presenceStates = [];
   eventWs.on("message", (data) => {
@@ -305,7 +307,9 @@ test("wire disconnect with unacked feedback resets presence from working to wait
       if (msg.type === "agent-presence") {
         presenceStates.push(msg.data.state);
       }
-    } catch {}
+    } catch {
+      // ignore non-JSON or other event messages
+    }
   });
 
   const nextPresence = async (expected, timeoutMs = 2000) => {
