@@ -11,6 +11,10 @@ import {
   estimateTokens,
   runSideBySideTurn,
   renderBenchmarkReport,
+  isBenchmarkEnabled,
+  isComparativeModeEnabled,
+  recordTurnMetrics,
+  renderRealUsageReport,
 } from "../src/benchmark.js";
 import { serve } from "../src/server.js";
 import { VERSION } from "../src/cli.js";
@@ -124,6 +128,161 @@ test("renderBenchmarkReport generates clean Markdown summary", () => {
 
   const report = renderBenchmarkReport(sampleRecords);
   assert.ok(report.includes("Executive Summary"));
-  assert.ok(report.includes("Wire-AXI Atomic Single-Turn Wait"));
+  assert.ok(report.includes("Wire-AXI Single-Turn Poll"));
   assert.ok(report.includes("Legacy HTTP Long-Polling Turn"));
+});
+
+test("isBenchmarkEnabled and isComparativeModeEnabled detect flags and environment", () => {
+  assert.equal(isBenchmarkEnabled([], {}), false);
+  assert.equal(isBenchmarkEnabled(["--dual-transport"], {}), true);
+  assert.equal(isBenchmarkEnabled([], { LAVISH_AXI_DUAL_TRANSPORT: "1" }), true);
+
+  assert.equal(isComparativeModeEnabled([], {}), false);
+  assert.equal(isComparativeModeEnabled(["--dual-transport"], {}), true);
+  assert.equal(isComparativeModeEnabled([], { LAVISH_AXI_DUAL_TRANSPORT: "1" }), true);
+});
+
+test("recordTurnMetrics logs standalone turns to real-usage-benchmark.jsonl", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-turn-metrics-"));
+  try {
+    const record1 = await recordTurnMetrics({
+      file: "/path/to/board.html",
+      transport: "wire-axi",
+      rawTransportMs: 25.5,
+      waitMs: 20.0,
+      replyMs: 5.5,
+      totalTurnMs: 45.0,
+      output: { session: { file: "board.html" }, next_step: "apply changes" },
+      prompts: [{ prompt: "Update navigation links to point to new routes" }],
+      replyText: "Links updated",
+      seq: 1,
+      comparative: false,
+      dataDir: dir,
+    });
+
+    assert.ok(record1);
+    assert.equal(record1.turn, 1);
+    assert.equal(record1.transport, "wire-axi");
+    assert.equal(record1.commandCalls, 1);
+    assert.ok(record1.payloadBytes > 0);
+    assert.ok(record1.payloadEstTokens > 0);
+
+    const record2 = await recordTurnMetrics({
+      file: "/path/to/board.html",
+      transport: "poll-fallback",
+      rawTransportMs: 65.0,
+      waitMs: 50.0,
+      replyMs: 15.0,
+      totalTurnMs: 70.0,
+      output: { session: { file: "board.html" }, next_step: "legacy step" },
+      prompts: [{ prompt: "Add border styling to hero section" }],
+      replyText: "Border styled",
+      seq: 2,
+      comparative: false,
+      dataDir: dir,
+    });
+
+    assert.ok(record2);
+    assert.equal(record2.turn, 2);
+    assert.equal(record2.transport, "poll-fallback");
+    assert.equal(record2.commandCalls, 2);
+
+    const jsonlContent = await readFile(path.join(dir, "real-usage-benchmark.jsonl"), "utf8");
+    const lines = jsonlContent.trim().split("\n");
+    assert.equal(lines.length, 2);
+
+    const reportContent = await readFile(path.join(dir, "real-usage-benchmark-report.md"), "utf8");
+    assert.ok(reportContent.includes("Total Real Turns: 2"));
+    assert.ok(reportContent.includes("wire-axi"));
+    assert.ok(reportContent.includes("poll-fallback"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("recordTurnMetrics in comparative mode measures legacy shadow cycle alongside wire turn", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "lavish-turn-comp-"));
+  const stateDir = path.join(dir, "state");
+  const dataDir = path.join(dir, "data");
+  await mkdir(stateDir);
+  await mkdir(dataDir);
+
+  const server = await serve({
+    port: 0,
+    host: "127.0.0.1",
+    stateFile: path.join(stateDir, "state.json"),
+    version: VERSION,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+
+  try {
+    const record = await recordTurnMetrics({
+      file: "/path/to/app.html",
+      transport: "wire-axi",
+      rawTransportMs: 30.0,
+      waitMs: 25.0,
+      replyMs: 5.0,
+      totalTurnMs: 30.0,
+      output: { session: { file: "app.html" }, next_step: "Done" },
+      prompts: [{ prompt: "Make header sticky on scroll" }],
+      replyText: "Header is now sticky",
+      seq: 1,
+      comparative: true,
+      baseUrl,
+      dataDir,
+    });
+
+    assert.ok(record);
+    assert.ok(record.comparison);
+    assert.equal(record.comparison.wire.commandCalls, 1);
+    assert.equal(record.comparison.legacy.commandCalls, 3);
+    assert.ok(record.comparison.legacy.transportMs > 0);
+    assert.ok(record.comparison.legacy.estTokens > record.comparison.wire.estTokens);
+    assert.ok(record.comparison.speedup > 0);
+    assert.ok(record.comparison.tokenReductionPct > 0);
+
+    // Verify measurements written to both jsonl files and markdown report
+    const realJsonl = await readFile(path.join(dataDir, "real-usage-benchmark.jsonl"), "utf8");
+    assert.ok(realJsonl.includes('"transport":"wire-axi"'));
+    assert.ok(realJsonl.includes('"comparison"'));
+
+    const benchJsonl = await readFile(path.join(dataDir, "benchmark-measurements.jsonl"), "utf8");
+    assert.ok(benchJsonl.includes('"round":1'));
+
+    const report = await readFile(path.join(dataDir, "real-usage-benchmark-report.md"), "utf8");
+    assert.ok(report.includes("Dual-Transport Comparative Measurements"));
+    assert.ok(report.includes("Token Reduction"));
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("renderRealUsageReport formats empty and populated reports cleanly", () => {
+  const emptyReport = renderRealUsageReport([]);
+  assert.ok(emptyReport.includes("No turns recorded yet."));
+
+  const populated = renderRealUsageReport([
+    {
+      turn: 1,
+      at: "2026-10-18T22:00:00Z",
+      board: "demo",
+      transport: "wire-axi",
+      latencyMs: 28.5,
+      payloadBytes: 400,
+      payloadEstTokens: 100,
+      commandCalls: 1,
+      comparison: {
+        wire: { transportMs: 28.5, payloadBytes: 400, estTokens: 100, commandCalls: 1 },
+        legacy: { transportMs: 65.0, payloadBytes: 1500, estTokens: 375, commandCalls: 3 },
+        speedup: 2.28,
+        tokenReductionPct: 73.3,
+      },
+    },
+  ]);
+
+  assert.ok(populated.includes("Executive Summary"));
+  assert.ok(populated.includes("2.28x speedup"));
+  assert.ok(populated.includes("Reduced from **3 calls**"));
+  assert.ok(populated.includes("Dual-Transport Comparative Measurements"));
 });
