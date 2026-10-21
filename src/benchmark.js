@@ -97,14 +97,6 @@ export function getBenchmarkDataDir() {
   if (process.env.LAVISH_AXI_BENCHMARK_DIR) {
     return process.env.LAVISH_AXI_BENCHMARK_DIR;
   }
-  const currentTaskDir = "/home/francjpd/Projects/firstmate/data/lavish-wire-axi-local";
-  if (existsSync(currentTaskDir)) {
-    return currentTaskDir;
-  }
-  const projectStateDir = "/home/francjpd/Projects/firstmate/data/wire-axi-lavish-integration";
-  if (existsSync(projectStateDir)) {
-    return projectStateDir;
-  }
   return path.resolve(process.cwd(), "data/lavish-wire-axi-local");
 }
 

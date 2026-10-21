@@ -532,7 +532,7 @@ export async function serve({
 
   function finishFeedbackDelivery(key, result) {
     if (result.status !== "feedback") return;
-    markFeedbackDelivered(key, activePolls, deliveredFeedback, events);
+    markFeedbackDelivered(key, activePolls, deliveredFeedback, events, activeWireSockets);
     // The take already stamped the batch Seen in state.json (docs/delivery-acks.md); tell the open
     // tabs only now, on the path that is about to write the response, never from the destructive
     // take itself, so a tab is not told Seen for a batch a disconnect is about to put back.
@@ -832,7 +832,7 @@ export async function serve({
       const url = shouldDisableLayoutGateOpen(req.body || {}) ? appendNoGateParam(sessionUrl) : sessionUrl;
       const session = await store.upsertSession(file, sessionUrl);
       if (existing?.status === "ended") {
-        clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
+        clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
       }
       logEvent?.(`session opened key=${key} file=${file}`);
       await syncOutstandingRepairs(key);
@@ -868,7 +868,7 @@ export async function serve({
     events.emit("chat-sync", key, session);
     // The reply concludes the delivered-feedback "working" state. Human sends remain available
     // while working because the server queues them for the next poll.
-    clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
+    clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
     return session;
   }
 
@@ -934,7 +934,7 @@ export async function serve({
         if (currentHolder && !takeover) return { conflict: listenerConflict(currentHolder, "LISTENER_ACTIVE") };
         const nextHolder = { key, owner, startedAt: Date.now(), replaced: false, replace: null };
         claimedHolder = nextHolder;
-        const priorPresence = presenceSignature(key, activePolls, deliveredFeedback);
+        const priorPresence = presenceSignature(key, activePolls, deliveredFeedback, activeWireSockets);
         if (currentHolder) {
           // Install the successor before releasing the old response so its cleanup cannot emit a
           // transient "waiting" state or clear the successor's listener ownership.
@@ -973,18 +973,18 @@ export async function serve({
           await restoreClosedFeedback(key, immediate);
           detachRequestClose();
           res.json(listenerConflict(holder, "LISTENER_REPLACED"));
-          releasePollListener(holder, activePolls, deliveredFeedback, events);
+          releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
           return;
         }
         if (requestClosed || res.writableEnded) {
           await restoreClosedFeedback(key, immediate);
-          releasePollListener(holder, activePolls, deliveredFeedback, events);
+          releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
           detachRequestClose();
           return;
         }
         finishFeedbackDelivery(key, immediate);
-        releasePollListener(holder, activePolls, deliveredFeedback, events);
-        if (immediate.session_ended) clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
+        releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
+        if (immediate.session_ended) clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
         detachRequestClose();
         res.json(agentFacingFeedback(immediate));
         return;
@@ -992,11 +992,11 @@ export async function serve({
       if (holder.replaced) {
         detachRequestClose();
         res.json(listenerConflict(holder, "LISTENER_REPLACED"));
-        releasePollListener(holder, activePolls, deliveredFeedback, events);
+        releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
         return;
       }
       if (requestClosed || res.writableEnded) {
-        releasePollListener(holder, activePolls, deliveredFeedback, events);
+        releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
         detachRequestClose();
         return;
       }
@@ -1022,7 +1022,7 @@ export async function serve({
         events.off("feedback", onFeedback);
         events.off("ended", onFeedback);
         events.off("browser-disconnected", onBrowserDisconnected);
-        releasePollListener(holder, activePolls, deliveredFeedback, events);
+        releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
         if (!activePolls.has(key)) {
           clearBrowserDisconnectTimer(key);
           browserDisconnectPending.delete(key);
@@ -1075,7 +1075,7 @@ export async function serve({
           }
         } finally {
           cleanup();
-          if (finalSessionEnded) clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
+          if (finalSessionEnded) clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
         }
       };
       function handleRespondError(error) {
@@ -1115,14 +1115,14 @@ export async function serve({
         onBrowserDisconnected(key);
         return;
       }
-      const nextPresence = presenceSignature(key, activePolls, deliveredFeedback);
+      const nextPresence = presenceSignature(key, activePolls, deliveredFeedback, activeWireSockets);
       if (nextPresence !== previousPresence) {
-        events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback));
+        events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback, activeWireSockets));
       }
       timer = timeoutMs === null ? null : setTimeout(() => respond().catch(handleRespondError), timeoutMs);
     } catch (error) {
       cleanupPoll?.();
-      if (claimedHolder) releasePollListener(claimedHolder, activePolls, deliveredFeedback, events);
+      if (claimedHolder) releasePollListener(claimedHolder, activePolls, deliveredFeedback, events, activeWireSockets);
       detachRequestClose();
       next(error);
     }
@@ -1183,7 +1183,7 @@ export async function serve({
         return;
       }
       const freshFeedback = session.fresh_feedback === true;
-      if (shouldEndSession) clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
+      if (shouldEndSession) clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events, activeWireSockets);
       let publishedSession = session;
       if (hasLayoutWarningPrompt) {
         await syncOutstandingRepairs(req.params.key);
@@ -1301,7 +1301,7 @@ export async function serve({
   app.post("/api/:key/end", async (req, res, next) => {
     try {
       const session = await store.endSession(req.params.key, "user");
-      clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
+      clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events, activeWireSockets);
       events.emit("ended", req.params.key, session?.ended_by);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
@@ -1451,7 +1451,7 @@ export async function serve({
       const file = await canonicalFile(req.body.file);
       const key = sessionKey(file);
       const session = await store.endSession(key, "agent");
-      clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
+      clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
       events.emit("ended", key, session?.ended_by);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
@@ -2191,112 +2191,93 @@ export async function serve({
       });
     }
 
-    const deliverPendingFeedback = async () => {
-      try {
-        const pending = await store.takeFeedback(key);
-        if (pending && pending.status === "feedback") {
-          if (webSocket.readyState === WebSocket.OPEN) {
-            const published = channel.publish({
-              payload: JSON.stringify(agentFacingFeedback(pending)),
-              flags: FLAGS.REQUIRES_ACK,
-              sender: "human",
-            });
-            finishFeedbackDelivery(key, pending);
-            pushWireFrame(
-              encodeFrame({
-                type: OPCODES.MESSAGE,
-                seqId: published.seqId,
-                channel: key,
-                flags: published.rawFlags,
-                payload: published.payload,
-              }),
-            );
-          } else {
-            await restoreClosedFeedback(key, pending);
-          }
-        }
-      } catch (err) {
-        writeLog(`[lavish] wire transport takeFeedback error: ${err?.message || err}`);
-      }
-    };
+    const unackedTakes = new Map();
+    let inTake = false;
 
-    // Notify if session was already ended
-    if (session.status === "ended") {
-      pushWireFrame(
-        encodeFrame({
-          type: OPCODES.CLOSE,
-          seqId: channel.lastSeq,
-          channel: key,
-          flags: FLAGS.END_SESSION,
-          payload: JSON.stringify({ status: "ended", ended_by: session.ended_by || "user" }),
-        }),
-      );
-    }
-
-    const onFeedback = async (changedKey) => {
-      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN) return;
+    const deliverFeedback = async (forcedResult = null) => {
+      if (webSocket.readyState !== WebSocket.OPEN || holder?.replaced || inTake) return;
+      inTake = true;
       try {
         const result = await store.takeFeedback(key);
-        if (result && result.status === "feedback") {
-          if (webSocket.readyState === WebSocket.OPEN) {
-            const published = channel.publish({
-              payload: JSON.stringify(agentFacingFeedback(result)),
-              flags: FLAGS.REQUIRES_ACK,
-              sender: "human",
-            });
-            finishFeedbackDelivery(key, result);
-            pushWireFrame(
-              encodeFrame({
-                type: OPCODES.MESSAGE,
-                seqId: published.seqId,
-                channel: key,
-                flags: published.rawFlags,
-                payload: published.payload,
-              }),
-            );
-          } else {
-            await restoreClosedFeedback(key, result);
+        const effectiveResult = forcedResult && result.status === "waiting" ? forcedResult : result;
+        if (!effectiveResult || effectiveResult.status === "waiting") {
+          return;
+        }
+        if (holder?.replaced || webSocket.readyState !== WebSocket.OPEN) {
+          if (effectiveResult.status === "feedback") {
+            await restoreClosedFeedback(key, effectiveResult);
           }
+          return;
+        }
+        if (effectiveResult.status === "feedback") {
+          const published = channel.publish({
+            payload: JSON.stringify(agentFacingFeedback(effectiveResult)),
+            flags: FLAGS.REQUIRES_ACK,
+            sender: "human",
+          });
+          unackedTakes.set(published.seqId, effectiveResult);
+          finishFeedbackDelivery(key, effectiveResult);
+          pushWireFrame(
+            encodeFrame({
+              type: OPCODES.MESSAGE,
+              seqId: published.seqId,
+              channel: key,
+              flags: published.rawFlags,
+              payload: published.payload,
+            }),
+          );
+        } else if (effectiveResult.status === "ended") {
+          const published = channel.publish({
+            payload: JSON.stringify({ status: "ended", ended_by: effectiveResult.ended_by || "user" }),
+            flags: FLAGS.END_SESSION,
+            sender: "server",
+          });
+          pushWireFrame(
+            encodeFrame({
+              type: OPCODES.CLOSE,
+              seqId: published.seqId,
+              channel: key,
+              flags: FLAGS.END_SESSION,
+              payload: published.payload,
+            }),
+          );
+          webSocket.close(1000, "SESSION_ENDED");
+        } else if (effectiveResult.status === "browser_disconnected") {
+          const published = channel.publish({
+            payload: JSON.stringify({ status: "browser_disconnected" }),
+            flags: FLAGS.NONE,
+            sender: "server",
+          });
+          pushWireFrame(
+            encodeFrame({
+              type: OPCODES.MESSAGE,
+              seqId: published.seqId,
+              channel: key,
+              flags: published.rawFlags,
+              payload: published.payload,
+            }),
+          );
         }
       } catch (err) {
-        writeLog(`[lavish] wire transport feedback push error: ${err?.message || err}`);
+        writeLog(`[lavish] wire transport feedback delivery error: ${err?.message || err}`);
+      } finally {
+        inTake = false;
       }
     };
 
-    const onEnded = (changedKey, endedBy) => {
-      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN) return;
-      const published = channel.publish({
-        payload: JSON.stringify({ status: "ended", ended_by: endedBy || "user" }),
-        flags: FLAGS.END_SESSION,
-        sender: "server",
-      });
-      pushWireFrame(
-        encodeFrame({
-          type: OPCODES.CLOSE,
-          seqId: published.seqId,
-          channel: key,
-          flags: FLAGS.END_SESSION,
-          payload: published.payload,
-        }),
-      );
+    const onFeedback = (changedKey) => {
+      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN || holder?.replaced) return;
+      deliverFeedback().catch(() => {});
+    };
+
+    const onEnded = (changedKey) => {
+      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN || holder?.replaced) return;
+      deliverFeedback().catch(() => {});
     };
 
     const onBrowserDisconnected = (changedKey) => {
-      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN) return;
-      const published = channel.publish({
-        payload: JSON.stringify({ status: "browser_disconnected" }),
-        flags: FLAGS.NONE,
-        sender: "server",
-      });
-      pushWireFrame(
-        encodeFrame({
-          type: OPCODES.MESSAGE,
-          seqId: published.seqId,
-          channel: key,
-          flags: published.rawFlags,
-          payload: published.payload,
-        }),
-      );
+      if (changedKey !== key || webSocket.readyState !== WebSocket.OPEN || holder?.replaced) return;
+      deliverFeedback({ status: "browser_disconnected" }).catch(() => {});
     };
 
     events.on("feedback", onFeedback);
@@ -2350,10 +2331,17 @@ export async function serve({
         }
 
         if (!clientExpectingReply) {
-          deliverPendingFeedback().catch(() => {});
+          deliverFeedback().catch(() => {});
         }
       } else if (frame.type === OPCODES.ACK) {
         channel.acknowledge(frame.seqId);
+        const acked = unackedTakes.get(frame.seqId);
+        if (acked) {
+          unackedTakes.delete(frame.seqId);
+          if (acked.session_ended) {
+            clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
+          }
+        }
       } else if (frame.type === OPCODES.MESSAGE) {
         let replyText = frame.payload;
         try {
@@ -2376,7 +2364,7 @@ export async function serve({
           }),
         );
         clientExpectingReply = false;
-        deliverPendingFeedback().catch(() => {});
+        deliverFeedback().catch(() => {});
       } else if (frame.type === OPCODES.CLOSE) {
         webSocket.close();
       }
@@ -2387,7 +2375,7 @@ export async function serve({
       messageHandler(pendingData);
     }
 
-    webSocket.once("close", () => {
+    webSocket.once("close", async () => {
       if (heartbeat) clearInterval(heartbeat);
       events.off("feedback", onFeedback);
       events.off("ended", onEnded);
@@ -2399,11 +2387,15 @@ export async function serve({
         if (currentSockets.size === 0) activeWireSockets.delete(key);
       }
       if (holder && activePolls.get(key) === holder) {
-        releasePollListener(holder, activePolls, deliveredFeedback, events);
+        releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets);
         if (!activePolls.has(key)) {
           clearBrowserDisconnectTimer(key);
           browserDisconnectPending.delete(key);
         }
+      }
+      for (const [seqId, unackedResult] of unackedTakes) {
+        unackedTakes.delete(seqId);
+        await restoreClosedFeedback(key, unackedResult);
       }
       events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback, activeWireSockets));
       refreshIdleTimer();
@@ -3218,11 +3210,11 @@ export function hasLiveReloadRootOptIn(html) {
   return /<meta\b(?=[^>]*name=["']lavish-live-reload["'])(?=[^>]*content=["']root["'])[^>]*>/i.test(searchableHtml);
 }
 
-function releasePollListener(holder, activePolls, deliveredFeedback, events) {
+function releasePollListener(holder, activePolls, deliveredFeedback, events, activeWireSockets = null) {
   if (activePolls.get(holder.key) !== holder) return;
-  const previousPresence = computePresence(holder.key, activePolls, deliveredFeedback);
+  const previousPresence = computePresence(holder.key, activePolls, deliveredFeedback, activeWireSockets);
   activePolls.delete(holder.key);
-  const nextPresence = computePresence(holder.key, activePolls, deliveredFeedback);
+  const nextPresence = computePresence(holder.key, activePolls, deliveredFeedback, activeWireSockets);
   if (nextPresence !== previousPresence) events.emit("agent-presence", holder.key, nextPresence);
 }
 
@@ -3242,19 +3234,19 @@ function listenerConflict(holder, code) {
   };
 }
 
-function markFeedbackDelivered(key, activePolls, deliveredFeedback, events) {
-  const previousPresence = computePresence(key, activePolls, deliveredFeedback);
+function markFeedbackDelivered(key, activePolls, deliveredFeedback, events, activeWireSockets = null) {
+  const previousPresence = computePresence(key, activePolls, deliveredFeedback, activeWireSockets);
   deliveredFeedback.add(key);
-  const nextPresence = computePresence(key, activePolls, deliveredFeedback);
+  const nextPresence = computePresence(key, activePolls, deliveredFeedback, activeWireSockets);
   if (nextPresence !== previousPresence) {
     events.emit("agent-presence", key, nextPresence);
   }
 }
 
-function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events) {
-  const previousPresence = computePresence(key, activePolls, deliveredFeedback);
+function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets = null) {
+  const previousPresence = computePresence(key, activePolls, deliveredFeedback, activeWireSockets);
   deliveredFeedback.delete(key);
-  const nextPresence = computePresence(key, activePolls, deliveredFeedback);
+  const nextPresence = computePresence(key, activePolls, deliveredFeedback, activeWireSockets);
   if (nextPresence !== previousPresence) {
     events.emit("agent-presence", key, nextPresence);
   }
@@ -3282,11 +3274,7 @@ export function presenceMode(key, activePolls, deliveredFeedback, activeWireSock
 
 function presenceEventData(key, state, activePolls, deliveredFeedback, activeWireSockets = null) {
   const mode = presenceMode(key, activePolls, deliveredFeedback, activeWireSockets);
-  const data = mode === "waiting-on-captain" ? { state } : { state, mode };
-  if (activeWireSockets?.has(key)) {
-    data.wire = true;
-  }
-  return data;
+  return mode === "waiting-on-captain" ? { state } : { state, mode };
 }
 
 function chromeIcon(paths, size = 16, strokeWidth = 1.7) {

@@ -4688,12 +4688,7 @@ events.set("chat-sync", (data) => {
   rememberChatAckIds(data.ack_ids);
   syncChat(data.chat || [], data.chat_revision);
 });
-let wireSocketActive = false;
-events.set("agent-presence", (data) => {
-  wireSocketActive = Boolean(data?.wire);
-  const effectiveState = wireSocketActive && data?.state === "waiting" ? "listening" : data?.state;
-  setAgentPresence(data?.mode === "external-listener" ? "external" : effectiveState);
-});
+events.set("agent-presence", (data) => setAgentPresence(data?.mode === "external-listener" ? "external" : data?.state));
 events.set("layout-warnings", (data) => setLayoutWarnings(data.warnings || []));
 events.set("ended", () => markSessionEnded());
 connectLiveEvents();

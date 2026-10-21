@@ -43,10 +43,11 @@ async function setupServer() {
 /**
  * @param {number} port
  * @param {string} key
- * @param {{ lastSeenSeq?: number, hasReply?: boolean }} [options]
+ * @param {{ lastSeenSeq?: number, hasReply?: boolean, autoAck?: boolean, takeover?: boolean }} [options]
  */
-function connectWireClient(port, key, { lastSeenSeq, hasReply = false } = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/wire/${encodeURIComponent(key)}`);
+function connectWireClient(port, key, { lastSeenSeq, hasReply = false, autoAck = true, takeover = false } = {}) {
+  const wsUrl = `ws://127.0.0.1:${port}/wire/${encodeURIComponent(key)}${takeover ? "?takeover=1" : ""}`;
+  const ws = new WebSocket(wsUrl);
   const frames = [];
   const openPromise = new Promise((resolve, reject) => {
     ws.on("error", reject);
@@ -78,6 +79,9 @@ function connectWireClient(port, key, { lastSeenSeq, hasReply = false } = {}) {
       if (frame.type === OPCODES.OPEN) {
         resolve(frame);
       }
+      if (frame.type === OPCODES.MESSAGE && autoAck && (frame.flags?.has?.("R") || frame.rawFlags?.includes("R"))) {
+        ws.send(encodeFrame({ type: OPCODES.ACK, seqId: frame.seqId, channel: key, flags: "-" }));
+      }
     });
   });
 
@@ -95,7 +99,9 @@ function connectWireClient(port, key, { lastSeenSeq, hasReply = false } = {}) {
       return null;
     },
     async close() {
+      if (ws.readyState === WebSocket.CLOSED) return;
       ws.close();
+      if (ws.readyState === WebSocket.CLOSED) return;
       await new Promise((r) => ws.once("close", r));
     },
   };
@@ -188,6 +194,99 @@ test("live message is dispatched to active connected listener in real time", asy
     assert.equal(msg.seqId, 1);
     assert.ok(msg.payload.includes("Realtime prompt test"));
     await c1.close();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("wire disconnect before acknowledgement restores feedback for subsequent poll", async () => {
+  const fixture = await setupServer();
+  try {
+    const c1 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0, autoAck: false });
+    await c1.openPromise;
+
+    await fixture.submitPrompt("Must not be lost on disconnect");
+    const msg1 = await c1.waitForMessage(2000);
+    assert.ok(msg1, "c1 must receive the prompt");
+    assert.ok(msg1.payload.includes("Must not be lost on disconnect"));
+
+    await c1.close();
+
+    const c2 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0 });
+    await c2.openPromise;
+
+    const msg2 = await c2.waitForMessage(2000);
+    assert.ok(msg2, "restored prompt must be delivered to c2");
+    assert.ok(msg2.payload.includes("Must not be lost on disconnect"));
+    await c2.close();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("connecting to ended session delivers pending feedback before returning ended", async () => {
+  const fixture = await setupServer();
+  try {
+    const c1 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0 });
+    await c1.openPromise;
+
+    const resp = await fetch(`${fixture.base}/api/${fixture.key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: fixture.base },
+      body: JSON.stringify({ prompts: [{ prompt: "Final prompt on end", tag: "message" }], endSession: true }),
+    });
+    assert.equal(resp.status, 200);
+
+    const msg = await c1.waitForMessage(2000);
+    assert.ok(msg, "must receive final feedback message");
+    const parsed = JSON.parse(msg.payload);
+    assert.equal(parsed.session_ended, true);
+    assert.equal(parsed.prompts[0].prompt, "Final prompt on end");
+    await c1.close();
+
+    const c2 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0 });
+    await c2.openPromise;
+
+    const startWait = Date.now();
+    while (Date.now() - startWait < 2000) {
+      if (c2.frames.some((f) => f.type === OPCODES.CLOSE)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const closeFrame = c2.frames.find((f) => f.type === OPCODES.CLOSE);
+    assert.ok(closeFrame, "subsequent client must receive CLOSE frame");
+    const closePayload = JSON.parse(closeFrame.payload);
+    assert.equal(closePayload.status, "ended");
+    await c2.close();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("wire takeover replaces existing listener and delivers feedback to successor", async () => {
+  const fixture = await setupServer();
+  try {
+    const c1 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0 });
+    await c1.openPromise;
+
+    const c2 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0, takeover: true });
+    await c2.openPromise;
+
+    const startWait = Date.now();
+    while (Date.now() - startWait < 2000) {
+      if (c1.frames.some((f) => f.type === OPCODES.CLOSE)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const c1Close = c1.frames.find((f) => f.type === OPCODES.CLOSE);
+    assert.ok(c1Close, "c1 must receive replacement CLOSE frame");
+    assert.ok(c1Close.payload.includes("LISTENER_REPLACED"));
+
+    await fixture.submitPrompt("For successor");
+    const msg = await c2.waitForMessage(2000);
+    assert.ok(msg, "c2 must receive the prompt");
+    assert.ok(msg.payload.includes("For successor"));
+
+    await c1.close();
+    await c2.close();
   } finally {
     await fixture.close();
   }

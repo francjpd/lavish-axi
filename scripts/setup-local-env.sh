@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DATA_DIR="${LAVISH_AXI_BENCHMARK_DIR:-/home/francjpd/Projects/firstmate/data/lavish-wire-axi-local}"
+DATA_DIR="${LAVISH_AXI_BENCHMARK_DIR:-$REPO_ROOT/data/lavish-wire-axi-local}"
 mkdir -p "$DATA_DIR/bin"
 
 echo "[setup-local-env] Building lavish-axi..."

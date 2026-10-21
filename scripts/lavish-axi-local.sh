@@ -18,7 +18,7 @@ if [ "${LAVISH_AXI_LOCAL_WIRE:-1}" != "0" ]; then
 fi
 
 # Default to local task data directory if present
-TASK_DATA_DIR="/home/francjpd/Projects/firstmate/data/lavish-wire-axi-local"
+TASK_DATA_DIR="$REPO_ROOT/data/lavish-wire-axi-local"
 if [ -d "$TASK_DATA_DIR" ] && [ -z "$LAVISH_AXI_BENCHMARK_DIR" ]; then
   export LAVISH_AXI_BENCHMARK_DIR="$TASK_DATA_DIR"
 fi

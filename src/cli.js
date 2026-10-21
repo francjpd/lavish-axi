@@ -734,7 +734,6 @@ export function createPollOutput({
   response,
   agent = "generic",
   seq = undefined,
-  includeDomSnapshot = true,
 }) {
   if (response.status === "missing") {
     throw new AxiError("No active Lavish Editor session for this file", "NOT_FOUND", [
@@ -755,7 +754,7 @@ export function createPollOutput({
       ...(artifactFailures.length > 0 ? { artifact_failures: artifactFailures } : {}),
       ...(seq !== undefined ? { seq } : {}),
       next_step: createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, response.prompts || [], agent),
-      ...(includeDomSnapshot ? { dom_snapshot: response.dom_snapshot || "" } : {}),
+      dom_snapshot: response.dom_snapshot || "",
     };
   }
   if (response.status === "ended") {
