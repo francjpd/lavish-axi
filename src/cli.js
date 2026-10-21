@@ -469,7 +469,6 @@ async function pollCommand(args) {
     );
   }
   const takeover = args.includes("--takeover");
-  const verboseInstructions = args.includes("--verbose-instructions");
   const agentReply = await resolveAgentReply(args);
   const absolute = await canonicalFile(file);
   const baseUrl = await ensureServer();
@@ -550,7 +549,6 @@ async function pollCommand(args) {
           file: absolute,
           response: wsResult,
           agent: detectInvokingAgent(process.env),
-          verboseInstructions,
           seq: frame.seqId,
         });
 
@@ -617,7 +615,6 @@ async function pollCommand(args) {
       file: absolute,
       response,
       agent: detectInvokingAgent(process.env),
-      verboseInstructions,
     });
 
     if (benchmarkEnabled) {
@@ -736,7 +733,6 @@ export function createPollOutput({
   file,
   response,
   agent = "generic",
-  verboseInstructions = true,
   seq = undefined,
   includeDomSnapshot = true,
 }) {
@@ -749,9 +745,6 @@ export function createPollOutput({
     const artifactFailures = Array.isArray(response.artifact_failures) ? response.artifact_failures : [];
     const sessionEnded = Boolean(response.session_ended);
     const endedBy = typeof response.ended_by === "string" ? response.ended_by : undefined;
-    const nextStep = verboseInstructions
-      ? createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, response.prompts || [], agent)
-      : createTerseFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, response.prompts || []);
     return {
       session: {
         file,
@@ -761,7 +754,7 @@ export function createPollOutput({
       prompts: response.prompts || [],
       ...(artifactFailures.length > 0 ? { artifact_failures: artifactFailures } : {}),
       ...(seq !== undefined ? { seq } : {}),
-      next_step: nextStep,
+      next_step: createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, response.prompts || [], agent),
       ...(includeDomSnapshot ? { dom_snapshot: response.dom_snapshot || "" } : {}),
     };
   }
@@ -783,24 +776,8 @@ export function createPollOutput({
   return {
     session: { file, status: response.status || "waiting" },
     ...(seq !== undefined ? { seq } : {}),
-    next_step: verboseInstructions
-      ? `No user feedback arrived before the optional timeout. Run \`lavish-axi poll ${file}\` without --timeout-ms to wait indefinitely - feedback remains queued until delivery, so re-running the poll is safe while waiting. Poll delivery consumes the response, so read it completely.`
-      : `No user feedback arrived before timeout. Run \`lavish-axi poll ${file}\` to wait for feedback.`,
+    next_step: `No user feedback arrived before the optional timeout. Run \`lavish-axi poll ${file}\` without --timeout-ms to wait indefinitely - feedback remains queued until delivery, so re-running the poll is safe while waiting. Poll delivery consumes the response, so read it completely.`,
   };
-}
-
-function createTerseFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, _prompts = []) {
-  if (sessionEnded) {
-    if (endedBy === "user") {
-      return `The user ended this Lavish Editor session. Stop polling ${file} and do not reopen it.`;
-    }
-    return `This Lavish Editor session for ${file} has ended. Stop polling.`;
-  }
-  const count = artifactFailures?.length || 0;
-  if (count > 0) {
-    return `${count} fatal artifact failure${count === 1 ? "" : "s"} detected. Repair ${file}, then run \`lavish-axi poll ${file} --agent-reply "<message>"\` to respond and continue.`;
-  }
-  return `Apply the requested changes to ${file}. Run \`lavish-axi poll ${file} --agent-reply "<message>"\` to respond and continue.`;
 }
 
 function createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, prompts = [], agent = "generic") {

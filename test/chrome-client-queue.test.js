@@ -562,7 +562,7 @@ async function createChromeHarness({
     },
     sendSnapshot(snapshot) {
       const request = [...postedToFrame].reverse().find((message) => message.type === "lavish:requestSnapshot");
-      if (!request?.snapshot_request_id) return;
+      assert.ok(request?.snapshot_request_id, "the chrome requested a correlated snapshot");
       const handlers = windowListeners.get("message") || [];
       assert.ok(handlers.length > 0, "chrome-client registered a message handler");
       for (const handler of handlers) {
@@ -780,16 +780,7 @@ test("a queued send falls back without a snapshot and ignores a late snapshot", 
       return { ok: true };
     },
   });
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: {
-      uid: "",
-      prompt: "Deliver even if the artifact navigated away",
-      selector: "h1",
-      tag: "annotation",
-      text: "Heading",
-    },
-  });
+  chrome.element("chatInput").value = "Deliver even if the artifact navigated away";
 
   chrome.element("send").click();
   const snapshotRequest = chrome.postedToFrame.at(-1);
@@ -816,9 +807,9 @@ test("a queued send falls back without a snapshot and ignores a late snapshot", 
             {
               uid: "",
               prompt: "Deliver even if the artifact navigated away",
-              selector: "h1",
-              tag: "annotation",
-              text: "Heading",
+              selector: "",
+              tag: "message",
+              text: "Freeform message",
             },
           ],
           domSnapshot: "",
@@ -855,15 +846,7 @@ test("Copy snapshot stays independent while a Send snapshot is pending", async (
       return { ok: true };
     },
   });
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: {
-      prompt: "Wait for this snapshot",
-      selector: "h1",
-      tag: "annotation",
-      text: "Heading",
-    },
-  });
+  chrome.element("chatInput").value = "Wait for this snapshot";
 
   chrome.element("send").click();
   const submitRequest = chrome.postedToFrame.at(-1);
@@ -900,10 +883,7 @@ test("a Send only submits prompts present when that action started", async () =>
       return { ok: true };
     },
   });
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "First batch", selector: "h1", tag: "annotation", text: "First" },
-  });
+  chrome.element("chatInput").value = "First batch";
 
   chrome.element("send").click();
   const firstRequest = chrome.postedToFrame.at(-1);
@@ -937,16 +917,10 @@ test("an older out-of-order snapshot cannot submit work queued after a newer Sen
     },
   });
 
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "First batch", selector: "h1", tag: "annotation", text: "First" },
-  });
+  chrome.element("chatInput").value = "First batch";
   chrome.element("send").click();
   const firstRequest = chrome.postedToFrame.at(-1);
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "Second batch", selector: "h2", tag: "annotation", text: "Second" },
-  });
+  chrome.element("chatInput").value = "Second batch";
   chrome.element("send").click();
   const secondRequest = chrome.postedToFrame.at(-1);
 
@@ -994,15 +968,9 @@ test("a Send started after another snapshot wins remains live while that POST is
     },
   });
 
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "First", selector: "h1", tag: "annotation", text: "1" },
-  });
+  chrome.element("chatInput").value = "First";
   chrome.element("send").click();
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "Second", selector: "h2", tag: "annotation", text: "2" },
-  });
+  chrome.element("chatInput").value = "Second";
   chrome.element("send").click();
   const winningRequest = chrome.postedToFrame.at(-1);
   chrome.sendFrameMessage({
@@ -1013,10 +981,7 @@ test("a Send started after another snapshot wins remains live while that POST is
   await flushPromises();
   assert.equal(posts.length, 1);
 
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: { prompt: "Third", selector: "h3", tag: "annotation", text: "3" },
-  });
+  chrome.element("chatInput").value = "Third";
   chrome.element("send").click();
   const laterRequest = chrome.postedToFrame.at(-1);
   releaseFirstPost();
@@ -2477,8 +2442,7 @@ test("Conversation retries a failed upload and then permits sending", async () =
   const id = "a".repeat(64) + ".png";
   const chrome = await createChromeHarness({
     sessionData: { ...defaultSessionData, attachmentMaxBytes: 1024, attachmentMaxCount: 4 },
-    fetchImpl: async (url) => {
-      if (String(url).includes("/prompts")) return { ok: true, json: async () => ({ status: "queued", chat: [] }) };
+    fetchImpl: async () => {
       attempts += 1;
       if (attempts === 1) return { ok: false, json: async () => ({ error: "storage full" }) };
       return { ok: true, json: async () => ({ attachment: { id } }) };
@@ -9018,136 +8982,4 @@ test("whiteboard init flags libraries that changed between the libraries and sou
   });
   assert.equal(failed.librariesUnavailable, true);
   assert.equal(JSON.stringify(failed.libraries), "[]");
-});
-
-test("pure chat submissions skip DOM snapshot and submit empty domSnapshot", async () => {
-  const posts = [];
-  const chrome = await createChromeHarness({
-    fetchImpl: async (url, init = {}) => {
-      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
-      return { ok: true, json: async () => ({ status: "queued", chat: [] }) };
-    },
-  });
-
-  chrome.element("chatInput").value = "are you listening to me ????";
-  chrome.element("send").click();
-  await flushPromises();
-
-  assert.equal(
-    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
-    false,
-    "pure chat submission must not request a frame snapshot",
-  );
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.domSnapshot, "");
-  assert.equal(posts[0].body.prompts.length, 1);
-  assert.equal(posts[0].body.prompts[0].prompt, "are you listening to me ????");
-  assert.equal(posts[0].body.prompts[0].tag, "message");
-  assert.equal(posts[0].body.prompts[0].selector, "");
-});
-
-test("element annotations capture DOM snapshot", async () => {
-  const posts = [];
-  const chrome = await createChromeHarness({
-    fetchImpl: async (url, init = {}) => {
-      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
-      return { ok: true, json: async () => ({ status: "queued", chat: [] }) };
-    },
-  });
-
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: {
-      prompt: "Make this button green",
-      selector: ".btn",
-      tag: "annotation",
-      text: "Submit",
-    },
-  });
-
-  chrome.element("send").click();
-  assert.equal(
-    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
-    true,
-    "element annotation must request a DOM snapshot from the frame",
-  );
-
-  chrome.sendSnapshot('uid=1 body\n  uid=2 button.btn "Submit"');
-  await flushPromises();
-
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.domSnapshot, 'uid=1 body\n  uid=2 button.btn "Submit"');
-  assert.equal(posts[0].body.prompts.length, 1);
-  assert.equal(posts[0].body.prompts[0].selector, ".btn");
-  assert.equal(posts[0].body.prompts[0].tag, "annotation");
-});
-
-test("whiteboard submissions bypass the filter and capture DOM snapshot", async () => {
-  const posts = [];
-  const chrome = await createChromeHarness({
-    fetchImpl: async (url, init = {}) => {
-      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
-      return { ok: true, json: async () => ({ status: "queued", chat: [] }) };
-    },
-  });
-
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: {
-      prompt: "Update architecture diagram",
-      selector: "",
-      tag: "whiteboard",
-      text: "Whiteboard: diagram 1",
-      target: { type: "excalidraw-scene", diagramIndex: 0 },
-    },
-  });
-
-  chrome.element("send").click();
-  assert.equal(
-    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
-    true,
-    "whiteboard prompt must bypass filter and request DOM snapshot",
-  );
-
-  chrome.sendSnapshot("uid=1 body\n  uid=2 div.diagram");
-  await flushPromises();
-
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.domSnapshot, "uid=1 body\n  uid=2 div.diagram");
-  assert.equal(posts[0].body.prompts[0].tag, "whiteboard");
-});
-
-test("mixed batch with pure message and element annotation still captures DOM snapshot", async () => {
-  const posts = [];
-  const chrome = await createChromeHarness({
-    fetchImpl: async (url, init = {}) => {
-      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
-      return { ok: true, json: async () => ({ status: "queued", chat: [] }) };
-    },
-  });
-
-  chrome.sendFrameMessage({
-    type: "lavish:queuePrompt",
-    prompt: {
-      prompt: "Annotated header",
-      selector: "h1",
-      tag: "annotation",
-      text: "Header text",
-    },
-  });
-  chrome.element("chatInput").value = "Also a general thought";
-
-  chrome.element("send").click();
-  assert.equal(
-    chrome.postedToFrame.some((message) => message.type === "lavish:requestSnapshot"),
-    true,
-    "batch containing an element anchor must request DOM snapshot",
-  );
-
-  chrome.sendSnapshot("uid=1 body\n  uid=2 h1");
-  await flushPromises();
-
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.domSnapshot, "uid=1 body\n  uid=2 h1");
-  assert.equal(posts[0].body.prompts.length, 2);
 });

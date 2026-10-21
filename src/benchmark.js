@@ -191,7 +191,7 @@ export function renderBenchmarkReport(records) {
 
   output += `### 1. Legacy HTTP Long-Polling Turn\n`;
   output += `Legacy workflow requires 3 separate CLI/API cycles per turn:\n`;
-  output += `1. \`lavish-axi poll <file> --verbose-instructions\` (waits for prompt)\n`;
+  output += `1. \`lavish-axi poll <file>\` (waits for prompt)\n`;
   output += `2. \`lavish-axi reply <file> --agent-reply "<msg>"\` (POSTs response to chat)\n`;
   output += `3. \`lavish-axi poll <file>\` (re-arms background listener)\n\n`;
 
