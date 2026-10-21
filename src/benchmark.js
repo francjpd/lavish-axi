@@ -63,14 +63,7 @@ export function estimateTokens(text) {
  * @returns {boolean}
  */
 export function isBenchmarkEnabled(args = [], env = process.env) {
-  return (
-    args.includes("--benchmark") ||
-    args.includes("--dual-transport") ||
-    args.includes("--comparative") ||
-    env.LAVISH_AXI_BENCHMARK === "1" ||
-    env.LAVISH_AXI_DUAL_TRANSPORT === "1" ||
-    env.LAVISH_AXI_METRICS === "1"
-  );
+  return args.includes("--dual-transport") || env.LAVISH_AXI_DUAL_TRANSPORT === "1";
 }
 
 /**
@@ -80,13 +73,7 @@ export function isBenchmarkEnabled(args = [], env = process.env) {
  * @returns {boolean}
  */
 export function isComparativeModeEnabled(args = [], env = process.env) {
-  if (args.includes("--comparative") || args.includes("--dual-transport") || env.LAVISH_AXI_DUAL_TRANSPORT === "1") {
-    return true;
-  }
-  if (isBenchmarkEnabled(args, env) && env.LAVISH_AXI_COMPARATIVE !== "0") {
-    return true;
-  }
-  return false;
+  return args.includes("--dual-transport") || env.LAVISH_AXI_DUAL_TRANSPORT === "1";
 }
 
 /**
@@ -319,7 +306,7 @@ export async function runSideBySideTurn({
   await fetch(`${baseUrl}/api/${shadowKey}/agent-reply`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: baseUrl },
-    body: JSON.stringify({ agent_reply: replyText }),
+    body: JSON.stringify({ text: replyText }),
   });
   const legacyReplyMs = performance.now() - replyStart;
 
@@ -437,7 +424,7 @@ export async function measureComparativeLegacyCycle({ baseUrl, promptLength, rep
       await fetch(`${baseUrl}/api/${shadowKey}/agent-reply`, {
         method: "POST",
         headers: { "content-type": "application/json", origin: baseUrl },
-        body: JSON.stringify({ agent_reply: replyText }),
+        body: JSON.stringify({ text: replyText }),
       });
       replyMs = performance.now() - replyStart;
     }

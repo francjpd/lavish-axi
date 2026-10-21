@@ -1312,7 +1312,7 @@ export async function serve({
 
   app.post("/api/:key/agent-reply", async (req, res, next) => {
     try {
-      const session = await publishAgentReply(req.params.key, String(req.body?.text || ""), {
+      const session = await publishAgentReply(req.params.key, String(req.body?.text ?? req.body?.agent_reply ?? ""), {
         requireOpen: true,
       });
       if (!session) {
@@ -2393,9 +2393,12 @@ export async function serve({
           browserDisconnectPending.delete(key);
         }
       }
-      for (const [seqId, unackedResult] of unackedTakes) {
-        unackedTakes.delete(seqId);
-        await restoreClosedFeedback(key, unackedResult);
+      if (unackedTakes.size > 0) {
+        for (const [seqId, unackedResult] of unackedTakes) {
+          unackedTakes.delete(seqId);
+          await restoreClosedFeedback(key, unackedResult);
+        }
+        clearFeedbackDelivery(key, activePolls, deliveredFeedback, events, activeWireSockets);
       }
       events.emit("agent-presence", key, computePresence(key, activePolls, deliveredFeedback, activeWireSockets));
       refreshIdleTimer();

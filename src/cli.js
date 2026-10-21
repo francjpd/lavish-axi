@@ -134,7 +134,7 @@ const POLL_AGENT_REPLY_HELP_POINTER =
   "The Conversation panel's Markdown subset is in README's Feedback controls bullet.";
 const POLL_AGENT_REPLY_NEXT_POINTER =
   "The Conversation panel's Markdown subset is in `lavish-axi poll --help` and README.";
-const POLL_VALUE_FLAGS = ["--agent-reply", "--agent-reply-file", "--timeout-ms", "--owner", "--ack", "--benchmark-dir"];
+const POLL_VALUE_FLAGS = ["--agent-reply", "--agent-reply-file", "--timeout-ms", "--owner", "--benchmark-dir"];
 const AGENT_REPLY_JSON_LIMIT_BYTES = 2 * 1024 * 1024;
 const AGENT_REPLY_JSON_ENVELOPE_BYTES = Buffer.byteLength(JSON.stringify({ agent_reply: "" }));
 const AGENT_REPLY_INPUT_LIMIT_BYTES = AGENT_REPLY_JSON_LIMIT_BYTES - AGENT_REPLY_JSON_ENVELOPE_BYTES;
@@ -473,8 +473,6 @@ async function pollCommand(args) {
   const absolute = await canonicalFile(file);
   const baseUrl = await ensureServer();
   const timeoutMs = flagValue(args, "--timeout-ms");
-  const ackFlag = flagValue(args, "--ack");
-  const ackSeq = ackFlag ? parseInt(ackFlag, 10) : undefined;
 
   const turnStartTime = performance.now();
   const benchmarkEnabled = isBenchmarkEnabled(args, process.env);
@@ -502,7 +500,6 @@ async function pollCommand(args) {
   try {
     if (!owner && !takeover) {
       const queryParams = new URLSearchParams();
-      if (ackSeq !== undefined) queryParams.set("last_seen_seq", String(ackSeq));
       if (agentReply) queryParams.set("has_reply", "1");
       const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
       const wsUrl = baseUrl.replace(/^http/, "ws") + `/wire/${encodeURIComponent(sessionKey(absolute))}${queryString}`;
@@ -510,7 +507,7 @@ async function pollCommand(args) {
       try {
         await client.connect(sessionKey(absolute), {
           timeoutMs: 1500,
-          lastSeenSeq: ackSeq || 0,
+          lastSeenSeq: 0,
           hasReply: Boolean(agentReply),
         });
         notifyHerdrPollReady();
@@ -518,7 +515,6 @@ async function pollCommand(args) {
         const frame = await client.wait({
           channel: sessionKey(absolute),
           reply: agentReply || undefined,
-          ackSeq,
           timeoutMs: timeout,
         });
         let wsResult;

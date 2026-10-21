@@ -134,17 +134,12 @@ test("renderBenchmarkReport generates clean Markdown summary", () => {
 
 test("isBenchmarkEnabled and isComparativeModeEnabled detect flags and environment", () => {
   assert.equal(isBenchmarkEnabled([], {}), false);
-  assert.equal(isBenchmarkEnabled(["--benchmark"], {}), true);
   assert.equal(isBenchmarkEnabled(["--dual-transport"], {}), true);
-  assert.equal(isBenchmarkEnabled([], { LAVISH_AXI_BENCHMARK: "1" }), true);
   assert.equal(isBenchmarkEnabled([], { LAVISH_AXI_DUAL_TRANSPORT: "1" }), true);
 
   assert.equal(isComparativeModeEnabled([], {}), false);
-  assert.equal(isComparativeModeEnabled(["--comparative"], {}), true);
   assert.equal(isComparativeModeEnabled(["--dual-transport"], {}), true);
   assert.equal(isComparativeModeEnabled([], { LAVISH_AXI_DUAL_TRANSPORT: "1" }), true);
-  assert.equal(isComparativeModeEnabled(["--benchmark"], {}), true);
-  assert.equal(isComparativeModeEnabled(["--benchmark"], { LAVISH_AXI_COMPARATIVE: "0" }), false);
 });
 
 test("recordTurnMetrics logs standalone turns to real-usage-benchmark.jsonl", async () => {

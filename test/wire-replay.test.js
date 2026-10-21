@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
@@ -21,6 +22,7 @@ async function setupServer() {
   const { key } = await res.json();
   return {
     dir,
+    stateFile: path.join(dir, "state.json"),
     artifact,
     server,
     base,
@@ -287,6 +289,73 @@ test("wire takeover replaces existing listener and delivers feedback to successo
 
     await c1.close();
     await c2.close();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("wire disconnect with unacked feedback resets presence from working to waiting", async () => {
+  const fixture = await setupServer();
+  const eventWs = new WebSocket(`${fixture.base.replace(/^http/, "ws")}/events/${fixture.key}`, { origin: fixture.base });
+  await once(eventWs, "open");
+  const presenceStates = [];
+  eventWs.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "agent-presence") {
+        presenceStates.push(msg.data.state);
+      }
+    } catch {}
+  });
+
+  const nextPresence = async (expected, timeoutMs = 2000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (presenceStates.includes(expected)) return true;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`timed out waiting for presence "${expected}", saw: ${JSON.stringify(presenceStates)}`);
+  };
+
+  try {
+    await nextPresence("waiting");
+
+    const c1 = connectWireClient(fixture.server.port, fixture.key, { lastSeenSeq: 0, autoAck: false });
+    await c1.openPromise;
+    await nextPresence("listening");
+
+    await fixture.submitPrompt("Unacked presence prompt");
+    const msg = await c1.waitForMessage(2000);
+    assert.ok(msg, "c1 must receive prompt");
+    await nextPresence("working");
+
+    presenceStates.length = 0;
+    await c1.close();
+
+    // Closing with unacked feedback should clear feedback delivery and return presence to waiting
+    await nextPresence("waiting");
+  } finally {
+    eventWs.close();
+    await fixture.close();
+  }
+});
+
+test("POST /api/:key/agent-reply accepts legacy agent_reply body key", async () => {
+  const fixture = await setupServer();
+  try {
+    const res = await fetch(`${fixture.base}/api/${fixture.key}/agent-reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: fixture.base },
+      body: JSON.stringify({ agent_reply: "Legacy reply payload text" }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.status, "sent");
+
+    const state = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    const agentEntry = state.sessions[fixture.key]?.chat?.find((c) => c.role === "agent");
+    assert.ok(agentEntry, "agent chat entry must exist");
+    assert.equal(agentEntry.text, "Legacy reply payload text");
   } finally {
     await fixture.close();
   }

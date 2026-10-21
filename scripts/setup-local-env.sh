@@ -21,7 +21,7 @@ cat > "$LAUNCHER" << EOF
 REPO_ROOT="$REPO_ROOT"
 unset LAVISH_AXI_DISABLE_WIRE
 export LAVISH_AXI_BENCHMARK_DIR="$DATA_DIR"
-if [ -z "\$LAVISH_AXI_DUAL_TRANSPORT" ] && [ "\$LAVISH_AXI_BENCHMARK" != "0" ]; then
+if [ -z "\$LAVISH_AXI_DUAL_TRANSPORT" ]; then
   export LAVISH_AXI_DUAL_TRANSPORT="1"
 fi
 exec node "\$REPO_ROOT/dist/cli.mjs" "\$@"
