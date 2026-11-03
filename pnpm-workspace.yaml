@@ -8,6 +8,7 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeExclude:
   - axi-sdk-js
   - lavish-axi
+  - wire-axi
 onlyBuiltDependencies:
   - esbuild
 allowBuilds:
