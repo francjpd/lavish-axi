@@ -1,0 +1,38 @@
+{
+  "title": "A report is a list of lines. A reader needs a run of time.",
+  "source": "source.md",
+  "voice": "am_michael",
+  "speed": 1,
+  "beats": [
+    {
+      "id": "answer",
+      "narration": "A report arrives as a list of lines. The reader rebuilds the order in their head. The output-surfaces audit starts there: passive surfaces still default to plain prose.",
+      "source_ref": "source.md#executive-summary"
+    },
+    {
+      "id": "shipped",
+      "narration": "Lavish already ships the parts. Export inlines audio, video and captions. The marketing folder already renders an HTML and GSAP timeline to MP4, with local text to speech.",
+      "source_ref": "source.md#capabilities"
+    },
+    {
+      "id": "gap",
+      "narration": "What is missing is instruction. No playbook tells an agent to build a narrated timeline, so the parts stay unconnected.",
+      "source_ref": "source.md#missing-playbook"
+    },
+    {
+      "id": "move",
+      "narration": "One playbook closes the gap. Read the source, write the beats, narrate the beats, render the timeline. No second renderer, no queue, no service.",
+      "source_ref": "source.md#recommendation"
+    },
+    {
+      "id": "timing",
+      "narration": "Timing comes from the narration itself. Each beat records how long its audio runs, and the next beat starts after it. Change a sentence and the visuals move with it.",
+      "source_ref": "narration.json"
+    },
+    {
+      "id": "outro",
+      "narration": "Open lavish axi playbook explainer to build the first one. The example in this repository explains the audit you just watched.",
+      "source_ref": "src/playbooks.js"
+    }
+  ]
+}

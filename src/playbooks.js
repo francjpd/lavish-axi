@@ -342,6 +342,60 @@ export const PLAYBOOKS = [
     ],
   },
   {
+    // The only playbook whose deliverable is a rendered file, so it is the only one that
+    // owns an ordered workflow: the recipe is the instruction an agent needs here.
+    id: "explainer",
+    use_when:
+      "Turn a report, an incident, a decision, or an outcome into a narrated timeline that a reader watches instead of reading",
+    choose: [
+      "Use it when order and cause are the point: an incident's failure chain, a report's ranked findings, a decision's trade-offs, or an outcome's route from cause to result.",
+      "Use the explanation playbook instead when the reader must scan, revisit, and annotate claims; a narrated timeline is one fixed pass in time, not a reference page.",
+      "Use slides when a person presents live; an explainer must stand alone with its own narration.",
+      "Put the rendered MP4 inside a Lavish artifact when the reader should discuss it afterwards: `export` already inlines a local MP4 under its size cap, so the video travels with the page around it.",
+    ],
+    structure: [
+      "Open with the answer, not with background: the first beat states the claim the rest of the timeline supports.",
+      "Give every beat one claim and one visual that shows it; two claims in one beat means two beats.",
+      "Order beats by cause and consequence, not by the source document's section order: setup, turning point, effect, what follows.",
+      "Keep one beat for the tension that makes the rest necessary - the gap, the failing assumption, the cost of leaving it.",
+      "Close with the reader's next action and where the source lives, instead of a summary that repeats the timeline.",
+      "Six to eight beats is the usable range; past ten, cut a beat rather than speed the voice up.",
+    ],
+    design_rules: [
+      "One beats file is the only timing input: it holds the spoken text and a source reference per beat, and nothing else is hand-tuned per render.",
+      "Narration decides the clock. Synthesize a beat's audio first, measure that file, and start the next beat after it ends; never write an offset you did not measure.",
+      "Point visual timing at the audio, not at the animation: the visual for a beat starts where that beat's narration starts, so editing a sentence moves the picture.",
+      "Cite inside the frame: each beat shows the source path and anchor it speaks for, so a viewer can check a claim without asking.",
+      "Copy the quoted lines into a small `source.md` beside the composition and give each beat an anchor in it, so the explainer is checkable from its own folder alone.",
+      'Author one scene per beat and name it `id="beat-<id>"`, then build the paused GSAP timeline from the measured per-beat offsets instead of typed numbers.',
+      "Give every `<audio>` element an `id`, `src`, `data-start`, and `data-duration`: the renderer discovers the track by id and silently drops audio without one.",
+      "Keep the composition deterministic: pin the GSAP version and the voice, and use no `Date.now()`, no `Math.random()`, and no runtime fetch.",
+      "Fail a check when committed timings and committed audio disagree, so a half-finished rebuild cannot ship.",
+      "Watch the rendered MP4 before delivering it; nothing else in this pipeline looks at the picture.",
+    ],
+    workflow: [
+      "1. Copy the lines you will narrate from the source document into `<explainer>/source.md` verbatim, one `##` anchor per claim, with the original path recorded at the top.",
+      "2. Write `<explainer>/beats.json`: `voice`, `speed`, and one object per beat with `id`, `narration` (the spoken sentences), and `source_ref` (an anchor in `source.md`, or the file that proves a mechanism).",
+      '3. Narrate every beat with the pinned local voice: `npx hyperframes@0.5.7 tts "<narration>" -o assets/narration/01-<id>.wav -v am_michael`, then `ffprobe -v error -show_entries format=duration -of csv=p=0 assets/narration/01-<id>.wav` for its seconds. Inside this repository `node lavish-editor-marketing/explainers/scripts/narrate.mjs <explainer>` runs that loop, writes `narration.json`, and rewrites the timing block in `index.html`; outside a checkout, keep the measured seconds in your beats file and write the `<audio>` elements yourself.',
+      '4. Write `index.html` as a HyperFrames composition: one `<section class="beat" id="beat-<id>">` per beat, one `<audio id="narration-<id>" src=... data-start="<measured start>" data-duration="<measured seconds>">` per beat, and a paused GSAP timeline on `window.__timelines` whose per-beat offsets come from those measurements, never from typed numbers.',
+      "5. Check, then render with `npx hyperframes@0.5.7 lint` and `npx hyperframes@0.5.7 render <explainer> -o renders/<slug>.mp4`, and require the compiled `audioCount` to equal the beat count. Inside this repository `narrate.mjs <explainer> --check` also fails when the committed timings no longer match the committed audio.",
+      "6. Re-run step 3 whenever a sentence or the voice changes: both the timings and the MP4 follow `beats.json`, and the MP4 is rendered again only when the explainer changes.",
+    ],
+    pitfalls: [
+      "Do not invent a claim the source does not make. A narrated claim sounds more confident than the same sentence buried in a report.",
+      "Do not narrate the document's structure; narrate the subject.",
+      "Do not add a queue, a daemon, a second renderer, or a hosted service. The local HTML timeline plus local text to speech is the whole pipeline.",
+      "Do not hand-edit the generated timing block or keep narration audio the beats file no longer produces; re-run the narration step instead.",
+      "Do not reach for a controlled-language standard such as ASD-STE100. Write plain technical English for a developer.",
+      "Do not let the example grow: six beats that run end to end prove the recipe, and a full production piece does not review.",
+    ],
+    lavish_notes: [
+      "The worked example is `lavish-editor-marketing/explainers/llm-output-surfaces`: a scout report that audits this repository, six beats, one rendered MP4, rebuilt with the commands above.",
+      "A rendered MP4 reviews well inside a Lavish artifact: a reviewer annotates the beat they doubt, and the prompt comes back with a timestamp.",
+      "A machine with a global libvips installed fails the sharp install behind `npx hyperframes`. Prefix the hyperframes command with `SHARP_IGNORE_GLOBAL_LIBVIPS=1`.",
+    ],
+  },
+  {
     id: "slides",
     use_when: "Create a deliberate presentation when slides are requested",
     choose: [

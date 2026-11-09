@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <title>A report is a list of lines. A reader needs a run of time.</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --ink-900: #0f1115;
+        --ink-800: #11141a;
+        --ink-700: #171a21;
+        --ink-600: #14171d;
+        --line: #232833;
+        --steel-700: #2a2f3a;
+        --steel-600: #303745;
+        --steel-400: #8c96aa;
+        --steel-300: #aeb6c6;
+        --steel-200: #b9c0cf;
+        --steel-100: #d8deea;
+        --cream-50: #fffbf3;
+        --cream-100: #f7f3ea;
+        --brass-500: #f4c95d;
+        --brass-400: #ffd877;
+        --sage-300: #8fe39e;
+        --rust-500: #f06464;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ink-900);
+        color: var(--cream-100);
+        font-family: "Inter", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ink-900);
+      }
+
+      .masthead {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 108px;
+        padding: 0 96px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+        z-index: 50;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-family: "EB Garamond", serif;
+        font-size: 34px;
+        letter-spacing: 0.01em;
+        color: var(--cream-50);
+      }
+
+      .brand-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        background: var(--brass-500);
+      }
+
+      .masthead-note,
+      .masthead-source {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        color: var(--steel-400);
+        letter-spacing: 0.04em;
+      }
+
+      .masthead-note {
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+      }
+
+      .beat {
+        position: absolute;
+        inset: 0;
+        padding: 148px 96px 96px;
+        display: grid;
+        grid-template-columns: 1.02fr 0.98fr;
+        gap: 88px;
+        align-items: center;
+        background: var(--ink-900);
+        opacity: 0;
+      }
+
+      .eyebrow {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--brass-500);
+      }
+
+      h1 {
+        margin-top: 26px;
+        font-family: "EB Garamond", serif;
+        font-size: 74px;
+        font-weight: 500;
+        line-height: 1.04;
+        letter-spacing: -0.015em;
+        color: var(--cream-50);
+      }
+
+      h1 em {
+        font-style: italic;
+        color: var(--brass-400);
+      }
+
+      .claim {
+        margin-top: 30px;
+        max-width: 33ch;
+        font-size: 30px;
+        line-height: 1.5;
+        color: var(--steel-200);
+      }
+
+      .cite {
+        margin-top: 34px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        color: var(--steel-400);
+      }
+
+      .cite::before {
+        content: "\25B8  ";
+        color: var(--brass-500);
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 34px;
+        justify-content: center;
+        padding: 46px;
+        min-height: 440px;
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        background: var(--ink-600);
+      }
+
+      .panel-label {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--steel-400);
+      }
+
+      .paper {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 26px 28px;
+        border-radius: 12px;
+        background: var(--cream-100);
+      }
+
+      .paper-line {
+        height: 11px;
+        border-radius: 3px;
+        background: rgba(15, 17, 21, 0.22);
+      }
+
+      .paper-line:nth-child(2n) {
+        width: 88%;
+      }
+
+      .paper-line:nth-child(3n) {
+        width: 94%;
+      }
+
+      .paper-line:nth-child(4n) {
+        width: 71%;
+      }
+
+      .paper-line:last-child {
+        width: 52%;
+      }
+
+      .axis {
+        display: flex;
+        gap: 18px;
+      }
+
+      .axis-slot {
+        flex: 1;
+        height: 74px;
+        border-radius: 8px;
+        border: 1px solid var(--steel-600);
+        background: var(--steel-700);
+      }
+
+      .axis-slot.is-now {
+        border-color: var(--brass-500);
+        background: rgba(244, 201, 93, 0.18);
+      }
+
+      .axis-caption {
+        display: flex;
+        gap: 18px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        color: var(--steel-400);
+      }
+
+      .axis-caption span {
+        flex: 1;
+      }
+
+      .cards {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .card {
+        padding: 30px 32px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--ink-800);
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: var(--sage-300);
+      }
+
+      .card h2 {
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.005em;
+        color: var(--cream-50);
+      }
+
+      .card code {
+        margin-top: 14px;
+        display: block;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        color: var(--brass-400);
+      }
+
+      .card p {
+        margin-top: 12px;
+        font-size: 21px;
+        line-height: 1.45;
+        color: var(--steel-300);
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      .chip {
+        padding: 10px 18px;
+        border-radius: 999px;
+        border: 1px solid var(--steel-600);
+        background: var(--ink-800);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        color: var(--steel-300);
+      }
+
+      .chip-missing {
+        border: 1px dashed var(--rust-500);
+        background: transparent;
+        color: var(--rust-500);
+      }
+
+      .panel-note {
+        font-size: 22px;
+        line-height: 1.45;
+        color: var(--rust-500);
+      }
+
+      .panel-foot {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        color: var(--steel-400);
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        list-style: none;
+      }
+
+      .step {
+        padding: 26px 28px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--ink-800);
+      }
+
+      .step-index {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.16em;
+        color: var(--steel-400);
+      }
+
+      .step h2 {
+        margin-top: 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--cream-50);
+      }
+
+      .step p {
+        margin-top: 8px;
+        font-size: 18px;
+        line-height: 1.4;
+        color: var(--steel-400);
+      }
+
+      .step-last {
+        border-color: var(--brass-500);
+        background: rgba(244, 201, 93, 0.08);
+      }
+
+      .timeline-strip {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+        height: 158px;
+      }
+
+      .slot {
+        display: flex;
+        flex-basis: 0;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 10px;
+        min-width: 0;
+        padding: 14px 14px 16px;
+        border-radius: 10px;
+        border: 1px solid var(--steel-600);
+        background: var(--steel-700);
+        transform-origin: bottom center;
+      }
+
+      .slot-name {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        color: var(--cream-100);
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .slot-seconds {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        color: var(--brass-400);
+      }
+
+      .outro {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        gap: 4px;
+      }
+
+      .outro h1 {
+        font-size: 96px;
+        margin-top: 22px;
+      }
+
+      .outro .claim {
+        max-width: 46ch;
+        margin-top: 34px;
+      }
+
+      .outro code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        color: var(--brass-400);
+      }
+
+      .progress {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 3px;
+        background: var(--line);
+        z-index: 60;
+      }
+
+      #progress-fill {
+        height: 100%;
+        width: 100%;
+        background: var(--brass-500);
+        transform: scaleX(0);
+        transform-origin: left center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="67.07" data-width="1920" data-height="1080">
+      <header class="masthead">
+        <span class="brand"><span class="brand-mark"></span>Lavish</span>
+        <span class="masthead-note">Narrated explainer</span>
+        <span class="masthead-source">source · data/llm-output-surfaces-audit/report.md</span>
+      </header>
+
+      <section class="beat" id="beat-answer">
+        <div class="beat-text">
+          <p class="eyebrow rise">The answer</p>
+          <h1 class="rise">A report is a list of lines.<br />A reader needs a <em>run of time</em>.</h1>
+          <p class="claim rise">
+            Passive understanding surfaces still default to plain prose, so the reader rebuilds the order before judging
+            the claim.
+          </p>
+          <p class="cite rise">source.md · Executive Summary</p>
+        </div>
+        <div class="panel">
+          <p class="panel-label rise">What the page gives you</p>
+          <div class="paper rise">
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+            <div class="paper-line"></div>
+          </div>
+          <p class="panel-label rise">What the reader needs</p>
+          <div class="axis rise">
+            <div class="axis-slot"></div>
+            <div class="axis-slot"></div>
+            <div class="axis-slot"></div>
+            <div class="axis-slot is-now"></div>
+          </div>
+          <div class="axis-caption rise">
+            <span>cause</span>
+            <span>turn</span>
+            <span>effect</span>
+            <span>now</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="beat" id="beat-shipped">
+        <div class="beat-text">
+          <p class="eyebrow rise">Already shipped</p>
+          <h1 class="rise">Lavish already ships the parts.</h1>
+          <p class="claim rise">
+            Two capabilities sit unconnected in this repository: media in the export bundle and a deterministic HTML
+            timeline renderer in the marketing folder.
+          </p>
+          <p class="cite rise">source.md · Capabilities</p>
+        </div>
+        <div class="panel">
+          <div class="cards">
+            <article class="card rise">
+              <div class="card-head">
+                <span class="dot"></span>
+                <h2>Export inlines media</h2>
+              </div>
+              <code>src/export-bundle.js</code>
+              <p>audio, video, source and track tags travel inside one HTML file.</p>
+            </article>
+            <article class="card rise">
+              <div class="card-head">
+                <span class="dot"></span>
+                <h2>Marketing renders MP4</h2>
+              </div>
+              <code>lavish-editor-marketing/</code>
+              <p>an HTML and GSAP timeline goes to MP4 with local text to speech.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="beat" id="beat-gap">
+        <div class="beat-text">
+          <p class="eyebrow rise">The gap</p>
+          <h1 class="rise">What is missing is <em>instruction</em>.</h1>
+          <p class="claim rise">
+            No playbook tells an agent to build a narrated timeline, so an agent never pairs the two.
+          </p>
+          <p class="cite rise">source.md · Missing playbook</p>
+        </div>
+        <div class="panel">
+          <p class="panel-label rise">Playbooks today</p>
+          <div class="chips">
+            <span class="chip rise">diagram</span>
+            <span class="chip rise">table</span>
+            <span class="chip rise">comparison</span>
+            <span class="chip rise">plan</span>
+            <span class="chip rise">code</span>
+            <span class="chip rise">input</span>
+            <span class="chip rise">explanation</span>
+            <span class="chip rise">slides</span>
+            <span class="chip chip-missing rise">explainer</span>
+          </div>
+          <p class="panel-note rise">No page in that list ends in a narrated timeline.</p>
+        </div>
+      </section>
+
+      <section class="beat" id="beat-move">
+        <div class="beat-text">
+          <p class="eyebrow rise">The move</p>
+          <h1 class="rise">One playbook, <em>four steps</em>.</h1>
+          <p class="claim rise">
+            The same pipeline the marketing video already uses, driven by a beats file instead of a hand-written
+            timeline.
+          </p>
+          <p class="cite rise">source.md · Recommendation</p>
+        </div>
+        <div class="panel">
+          <ol class="steps">
+            <li class="step rise">
+              <span class="step-index">01</span>
+              <h2>source</h2>
+              <p>one document on disk, quoted verbatim</p>
+            </li>
+            <li class="step rise">
+              <span class="step-index">02</span>
+              <h2>beats</h2>
+              <p>one claim and one narration line per beat</p>
+            </li>
+            <li class="step rise">
+              <span class="step-index">03</span>
+              <h2>narration</h2>
+              <p>local text to speech, measured per beat</p>
+            </li>
+            <li class="step step-last rise">
+              <span class="step-index">04</span>
+              <h2>MP4</h2>
+              <p>the existing hyperframes render</p>
+            </li>
+          </ol>
+          <p class="panel-foot rise">no second renderer, no queue, no service</p>
+        </div>
+      </section>
+
+      <section class="beat" id="beat-timing">
+        <div class="beat-text">
+          <p class="eyebrow rise">The mapping</p>
+          <h1 class="rise">Timing comes from the <em>narration</em>.</h1>
+          <p class="claim rise">
+            Each beat records how long its audio runs, and the next beat starts after it. Change a sentence and the
+            visuals move with it.
+          </p>
+          <p class="cite rise">narration.json · measured from each audio file</p>
+        </div>
+        <div class="panel">
+          <p class="panel-label rise">Six beats, measured</p>
+          <div class="timeline-strip" id="timeline-strip"></div>
+          <p class="panel-foot rise">block width is that beat's narrated seconds</p>
+        </div>
+      </section>
+
+      <section class="beat outro" id="beat-outro">
+        <div class="beat-text">
+          <p class="eyebrow rise">Next</p>
+          <h1 class="rise">lavish-axi playbook explainer</h1>
+          <p class="claim rise">
+            The worked example lives at<br /><code>lavish-editor-marketing/explainers/llm-output-surfaces</code>
+          </p>
+        </div>
+      </section>
+
+      <!-- narrate:start (generated by ../scripts/narrate.mjs from beats.json) -->
+      <script id="narration-data" type="application/json">
+        {
+          "generated_by": "lavish-editor-marketing/explainers/scripts/narrate.mjs",
+          "voice": "am_michael",
+          "speed": 1,
+          "lead_in_seconds": 0.5,
+          "total_seconds": 67.07,
+          "beats": [
+            {
+              "id": "answer",
+              "file": "assets/narration/01-answer.wav",
+              "seconds": 11.67,
+              "start": 0.5,
+              "end": 12.17
+            },
+            {
+              "id": "shipped",
+              "file": "assets/narration/02-shipped.wav",
+              "seconds": 13.67,
+              "start": 12.52,
+              "end": 26.19
+            },
+            {
+              "id": "gap",
+              "file": "assets/narration/03-gap.wav",
+              "seconds": 8.02,
+              "start": 26.54,
+              "end": 34.56
+            },
+            {
+              "id": "move",
+              "file": "assets/narration/04-move.wav",
+              "seconds": 9.9,
+              "start": 34.91,
+              "end": 44.81
+            },
+            {
+              "id": "timing",
+              "file": "assets/narration/05-timing.wav",
+              "seconds": 11.03,
+              "start": 45.16,
+              "end": 56.19
+            },
+            {
+              "id": "outro",
+              "file": "assets/narration/06-outro.wav",
+              "seconds": 9.13,
+              "start": 56.54,
+              "end": 65.67
+            }
+          ]
+        }
+      </script>
+      <audio
+        id="narration-answer"
+        src="assets/narration/01-answer.wav"
+        data-start="0.5"
+        data-duration="11.67"
+        data-track-index="1"
+      ></audio>
+      <audio
+        id="narration-shipped"
+        src="assets/narration/02-shipped.wav"
+        data-start="12.52"
+        data-duration="13.67"
+        data-track-index="1"
+      ></audio>
+      <audio
+        id="narration-gap"
+        src="assets/narration/03-gap.wav"
+        data-start="26.54"
+        data-duration="8.02"
+        data-track-index="1"
+      ></audio>
+      <audio
+        id="narration-move"
+        src="assets/narration/04-move.wav"
+        data-start="34.91"
+        data-duration="9.9"
+        data-track-index="1"
+      ></audio>
+      <audio
+        id="narration-timing"
+        src="assets/narration/05-timing.wav"
+        data-start="45.16"
+        data-duration="11.03"
+        data-track-index="1"
+      ></audio>
+      <audio
+        id="narration-outro"
+        src="assets/narration/06-outro.wav"
+        data-start="56.54"
+        data-duration="9.13"
+        data-track-index="1"
+      ></audio>
+      <!-- narrate:end -->
+
+      <div class="progress"><div id="progress-fill"></div></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      const narration = JSON.parse(document.getElementById("narration-data").textContent);
+      const strip = document.getElementById("timeline-strip");
+      for (const beat of narration.beats) {
+        const slot = document.createElement("div");
+        slot.className = "slot";
+        slot.style.flexGrow = String(beat.seconds);
+        const name = document.createElement("span");
+        name.className = "slot-name";
+        name.textContent = beat.id;
+        const seconds = document.createElement("span");
+        seconds.className = "slot-seconds";
+        seconds.textContent = beat.seconds.toFixed(2) + "s";
+        slot.append(name, seconds);
+        strip.append(slot);
+      }
+
+      const tl = gsap.timeline({ paused: true });
+
+      gsap.set(".beat", { opacity: 0 });
+
+      narration.beats.forEach((beat, index) => {
+        const scene = document.getElementById("beat-" + beat.id);
+        const next = narration.beats[index + 1];
+        const enter = Math.max(beat.start - 0.45, 0);
+        const leave = next ? Math.max(next.start - 0.55, enter + 0.6) : beat.end + 0.4;
+        tl.set(scene, { opacity: 1, zIndex: 10 + index }, enter);
+        tl.fromTo(scene, { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, enter);
+        tl.from(
+          scene.querySelectorAll(".rise"),
+          { y: 16, opacity: 0, duration: 0.4, stagger: 0.06, ease: "power2.out" },
+          enter + 0.12,
+        );
+        if (next) tl.to(scene, { opacity: 0, y: -18, duration: 0.45, ease: "sine.inOut" }, leave);
+      });
+
+      const timing = narration.beats.find((beat) => beat.id === "timing");
+      if (timing) {
+        tl.from(
+          "#timeline-strip .slot",
+          { scaleY: 0.25, opacity: 0, duration: 0.4, stagger: 0.06, ease: "power2.out" },
+          timing.start + 0.5,
+        );
+      }
+
+      tl.to("#progress-fill", { scaleX: 1, duration: narration.total_seconds, ease: "none" }, 0);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

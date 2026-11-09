@@ -1,0 +1,13 @@
+{
+  "name": "llm-output-surfaces-explainer",
+  "private": true,
+  "type": "module",
+  "description": "Worked example of the explainer playbook: a scout report turned into a narrated timeline.",
+  "scripts": {
+    "narrate": "node ../scripts/narrate.mjs .",
+    "check:narration": "node ../scripts/narrate.mjs . --check",
+    "lint": "npx --yes hyperframes@0.5.7 lint",
+    "render": "npx --yes hyperframes@0.5.7 render . -o renders/llm-output-surfaces.mp4",
+    "check": "npm run check:narration && npm run lint"
+  }
+}
