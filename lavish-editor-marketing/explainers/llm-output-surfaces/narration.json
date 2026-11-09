@@ -1,0 +1,51 @@
+{
+  "generated_by": "lavish-editor-marketing/explainers/scripts/narrate.mjs",
+  "voice": "am_michael",
+  "speed": 1,
+  "lead_in_seconds": 0.5,
+  "total_seconds": 67.07,
+  "beats": [
+    {
+      "id": "answer",
+      "file": "assets/narration/01-answer.wav",
+      "seconds": 11.67,
+      "start": 0.5,
+      "end": 12.17
+    },
+    {
+      "id": "shipped",
+      "file": "assets/narration/02-shipped.wav",
+      "seconds": 13.67,
+      "start": 12.52,
+      "end": 26.19
+    },
+    {
+      "id": "gap",
+      "file": "assets/narration/03-gap.wav",
+      "seconds": 8.02,
+      "start": 26.54,
+      "end": 34.56
+    },
+    {
+      "id": "move",
+      "file": "assets/narration/04-move.wav",
+      "seconds": 9.9,
+      "start": 34.91,
+      "end": 44.81
+    },
+    {
+      "id": "timing",
+      "file": "assets/narration/05-timing.wav",
+      "seconds": 11.03,
+      "start": 45.16,
+      "end": 56.19
+    },
+    {
+      "id": "outro",
+      "file": "assets/narration/06-outro.wav",
+      "seconds": 9.13,
+      "start": 56.54,
+      "end": 65.67
+    }
+  ]
+}
